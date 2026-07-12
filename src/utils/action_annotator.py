@@ -485,5 +485,5 @@ def delete_clip(source_name, folder_name):
 
 
 if __name__ == '__main__':
-    print("服务已启动。请在浏览器中访问: https://127.0.0.1:5000")
-    app.run(host='0.0.0.0', port=5000, debug=False, threaded=True, ssl_context='adhoc')
+    print("服务已启动。请在浏览器中访问: https://127.0.0.1:5011")
+    app.run(host='0.0.0.0', port=5011, debug=False, threaded=True, ssl_context='adhoc')
