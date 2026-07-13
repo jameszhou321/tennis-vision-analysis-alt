@@ -8,9 +8,9 @@ _SRC_DIR = os.path.dirname(os.path.abspath(__file__))
 _PROJECT_DIR = os.path.dirname(_SRC_DIR)
 
 # 路径配置
-VIDEO_PATH = os.path.join(_PROJECT_DIR, "videos")
-OUTPUT_DIR = os.path.join(_PROJECT_DIR, "data", "rallies_new")
-MODEL_PATH = os.path.join(_PROJECT_DIR, "models", "yolo", "yolo11x-pose.pt")
+VIDEO_PATH = os.path.join(_SRC_DIR, "videos")
+OUTPUT_DIR = os.path.join(_SRC_DIR, "data", "rallies_new")
+MODEL_PATH = os.path.join(_SRC_DIR, "models", "yolo", "yolo11x-pose.pt")
 
 # 视频处理与队列参数
 SCOUT_SKIP_FRAMES = 5
@@ -25,5 +25,5 @@ POSE_MAX_GAP = 5          # 丢帧补偿上限(帧)
 POSE_ALPHA = 0.6          # EMA 平滑系数
 
 # 控制文件与存档
-CONTROL_FILE = os.path.join(_PROJECT_DIR, "logs", "control.txt")
-CHECKPOINT_FILE = os.path.join(_PROJECT_DIR, "logs", "checkpoint.json")
+CONTROL_FILE = os.path.join(_SRC_DIR, "logs", "control.txt")
+CHECKPOINT_FILE = os.path.join(_SRC_DIR, "logs", "checkpoint.json")

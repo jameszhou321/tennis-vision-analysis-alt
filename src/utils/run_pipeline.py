@@ -1,66 +1,66 @@
 import cv2
 import os
-from broadcast_detector import BroadcastViewClassifier
+from broadcast_detector import SpatialRallyDetector  # Uses our updated tracking logic
 
 def main():
-    # Setup paths - Change these to match your workspace video names
-    input_video_path = "input_videos/shortenedos.mp4"
-    output_video_path = "output_broadcast_analyzed.mp4"
+    input_video_path = "input_videos/match.mp4"
+    output_video_path = "output_spatial_analysis.mp4"
 
     if not os.path.exists(input_video_path):
-        print(f"Error: Please place a video file at '{input_video_path}' before running.")
+        print(f"File missing at: {input_video_path}")
         return
 
-    # Initialize video capture engine
     cap = cv2.VideoCapture(input_video_path)
     fps = int(cap.get(cv2.CAP_PROP_FPS)) or 30
     width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
     height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
 
-    # Initialize video output writer
     fourcc = cv2.VideoWriter_fourcc(*'mp4v')
     out = cv2.VideoWriter(output_video_path, fourcc, fps, (width, height))
 
-    # Instantiate our broadcast classifier tool
-    # (Adjust target_hue_range if working with a unique clay red court: e.g., 0 to 20)
-    classifier = BroadcastViewClassifier(target_hue_range=(85, 130))
+    # Initialize the spatial tracker
+    tracker = SpatialRallyDetector(fps=fps, buffer_seconds=2.0)
 
-    print("Processing broadcast video streams...")
+    print("Running spatial tracking analysis...")
 
     while cap.isOpened():
         ret, frame = cap.read()
         if not ret:
             break
 
-        # Process frame state
-        is_rally = classifier.is_rally_view(frame)
+        # =====================================================================
+        # HOOK YOUR EXISTING TRACKERS HERE
+        # Swap out these mock variables for your project's real tracking logic!
+        # =====================================================================
+        # Example: 
+        # ball_xy = your_ball_detector.get_xy(frame) 
+        # player_boxes = your_player_detector.get_boxes(frame)
+        
+        ball_xy = (int(width/2), int(height/2))  # Placeholder center coords
+        player_boxes = [[100, 200, 150, 350], [100, 500, 150, 650]] # Placeholder bounds
+        # =====================================================================
 
-        # Determine UI attributes based on state
-        if is_rally:
-            status_text = "STATE: PLAYING (RALLY VIEW)"
-            color = (0, 255, 0)  # Green
-        else:
-            status_text = "STATE: NOT PLAYING (NON-RALLY)"
-            color = (0, 0, 255)  # Red
+        # Calculate live state using the tracking data
+        in_play = tracker.update(ball_xy, player_boxes)
 
-        # Render a sleek UI header bar on top of the frame
-        cv2.rectangle(frame, (20, 20), (620, 90), (15, 15, 15), -1)
-        cv2.putText(frame, status_text, (40, 65), 
+        # UI Visuals
+        status_text = "PLAYING" if in_play else "NOT PLAYING"
+        color = (0, 255, 0) if in_play else (0, 0, 255)
+
+        cv2.rectangle(frame, (30, 30), (400, 110), (0, 0, 0), -1)
+        cv2.putText(frame, f"STATE: {status_text}", (50, 80), 
                     cv2.FONT_HERSHEY_SIMPLEX, 1.0, color, 3, cv2.LINE_AA)
 
-        # Save and display frame live
         out.write(frame)
-        cv2.imshow("Broadcast View Classification Pipeline", frame)
+        cv2.imshow("Spatial Rally Analysis", frame)
 
-        # Safe interrupt option
         if cv2.waitKey(1) & 0xFF == ord('q'):
             break
 
-    # Release hardware holds cleanly
     cap.release()
     out.release()
     cv2.destroyAllWindows()
-    print(f"Analysis Complete! Video exported to: {output_video_path}")
+    print("Processing complete!")
 
 if __name__ == "__main__":
     main()

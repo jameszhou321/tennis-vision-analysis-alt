@@ -1,51 +1,67 @@
 import cv2
 import numpy as np
 
-class BroadcastViewClassifier:
-    def __init__(self, target_hue_range=(85, 130), min_line_count=6):
+class SpatialRallyDetector:
+    def __init__(self, fps=30, buffer_seconds=2.0, speed_threshold=12.0):
         """
-        Classifies broadcast frames into 'Rally View' vs 'Non-Playing Views'.
-        :param target_hue_range: HSV Hue range for the court surface (85-130 covers most blue/green courts)
-        :param min_line_count: Minimum structural lines required to confirm a court layout
+        Detects rallies based on the physics of the ball and player positions.
+        :param speed_threshold: Minimum pixel movement per frame to consider the ball 'active'
         """
-        self.target_hue_range = target_hue_range
-        self.min_line_count = min_line_count
+        self.fps = fps
+        self.buffer_frames = int(fps * buffer_seconds)
+        self.speed_threshold = speed_threshold
         
-        # State smoothing buffer (prevents rapid flickering between states)
-        self.state_history = []
-        self.buffer_size = 10 
+        # Tracking buffers
+        self.ball_history = []
+        self.frames_since_active_play = self.buffer_frames
+        self.is_playing = False
 
-    def is_rally_view(self, frame):
+    def update(self, ball_xy, player_boxes):
         """
-        Analyzes frame features to detect a classic wide-angle tennis court view.
+        Core logic engine. Call this every frame.
+        :param ball_xy: (x, y) tuple of the ball, or None if not detected
+        :param player_boxes: List of bounding boxes [[x1,y1,x2,y2], ...] for detected players
         """
-        # 1. Downscale frame for speed optimization
-        small_frame = cv2.resize(frame, (640, 360))
-        hsv = cv2.cvtColor(small_frame, cv2.COLOR_BGR2HSV)
-        gray = cv2.cvtColor(small_frame, cv2.COLOR_BGR2GRAY)
+        is_frame_active = False
 
-        # 2. Check for Court Color Presence
-        lower_bound = np.array([self.target_hue_range[0], 40, 40])
-        upper_bound = np.array([self.target_hue_range[1], 255, 255])
-        court_mask = cv2.inRange(hsv, lower_bound, upper_bound)
-        
-        # Calculate what percentage of the screen matches the court color
-        court_pixel_ratio = np.sum(court_mask > 0) / court_mask.size
+        # 1. Analyze Ball Physics
+        if ball_xy is not None:
+            self.ball_history.append(ball_xy)
+            if len(self.ball_history) > 5:
+                self.ball_history.pop(0)
 
-        # 3. Structural Line Detection (Hough Lines)
-        edges = cv2.Canny(gray, 50, 150, apertureSize=3)
-        lines = cv2.HoughLinesP(edges, 1, np.pi/180, threshold=100, minLineLength=80, maxLineGap=10)
-        
-        line_count = len(lines) if lines is not None else 0
+            if len(self.ball_history) >= 2:
+                # Calculate velocity between the last two frames
+                p1 = np.array(self.ball_history[-2])
+                p2 = np.array(self.ball_history[-1])
+                velocity = np.linalg.norm(p2 - p1)
 
-        # 4. Binary Decision Heuristic
-        # A rally view has ample court color visible AND structured geometric lines
-        is_current_frame_rally = (court_pixel_ratio > 0.15) and (line_count >= self.min_line_count)
+                # If the ball is flying fast, it's a strong indicator of live play
+                if velocity > self.speed_threshold:
+                    is_frame_active = True
 
-        # 5. Apply Temporal Smoothing Window
-        self.state_history.append(is_current_frame_rally)
-        if len(self.state_history) > self.buffer_size:
-            self.state_history.pop(0)
+        # 2. Analyze Player Context (Spatial separation)
+        # If players are too close to each other (e.g., walking to change sides or high-fiving), 
+        # it's likely a break period.
+        if player_boxes is not None and len(player_boxes) >= 2:
+            p1_center_y = (player_boxes[0][1] + player_boxes[0][3]) / 2
+            p2_center_y = (player_boxes[1][1] + player_boxes[1][3]) / 2
+            
+            # If they are vertically separated (one far court, one near court), confirm layout
+            vertical_distance = abs(p1_center_y - p2_center_y)
+            if vertical_distance < 150:  # Adjust based on video resolution
+                is_frame_active = False
 
-        # Return the majority vote from the buffer
-        return sum(self.state_history) > (len(self.state_history) / 2)
+        # 3. State Management Window
+        if is_frame_active:
+            self.is_playing = True
+            self.frames_since_active_play = 0
+        else:
+            self.frames_since_active_play += 1
+
+        # If the ball goes dead or players stop moving for too long, kill the rally state
+        if self.frames_since_active_play >= self.buffer_frames:
+            self.is_playing = False
+            self.ball_history.clear()
+
+        return self.is_playing

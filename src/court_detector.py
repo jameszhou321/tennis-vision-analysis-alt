@@ -1,6 +1,7 @@
 """court_detector.py — 球场检测器（供 main.py 使用）
 
 功能：封装 YOLO 球场关键点检测，提供 CourtDetector 类接口
+修复：增加了强健的 Hough 变换线条解包守护，防止由于数据维度异常产生的 Unpack 错误
 """
 import cv2
 import numpy as np
@@ -29,7 +30,20 @@ class CourtDetector:
         horizontals, left_lines, right_lines = [], [], []
 
         for line in lines:
-            x1, y1, x2, y2 = line[0]
+            # =====================================================================
+            # 增强型解包守卫：确保只解析符合 [x1, y1, x2, y2] 格式的有效线段
+            # =====================================================================
+            try:
+                if len(line.shape) == 1 and len(line) == 4:
+                    x1, y1, x2, y2 = line
+                elif len(line) > 0 and len(line[0]) == 4:
+                    x1, y1, x2, y2 = line[0]
+                else:
+                    continue  # 跳过结构异常的噪声数据
+            except (TypeError, IndexError, ValueError):
+                continue  # 捕获任何潜在的解包异常，确保多线程不崩溃
+            # =====================================================================
+
             if y1 < h * 0.3 or y2 < h * 0.3 or y1 > h * 0.9 or y2 > h * 0.9:
                 continue
             if y1 < y2:
@@ -71,7 +85,7 @@ class CourtDetector:
                     else:
                         net_y = c_y_min + c_h * 0.45
 
-                    # 向上延展 80% 球场高度，确保远端球员完整进入 ROI（max(0,...) 防越界）
+                    # 向上延展 80% 球场高度，确保远端球员完整进入 ROI
                     f_y1 = max(0, c_y_min - c_h * 0.8)
 
                     f_y2 = net_y + 15 * self.scale
