@@ -15,7 +15,7 @@ MODEL_PATH = os.path.join(_SRC_DIR, "models", "yolo", "yolo11x-pose.pt")
 # Video Processing and Queue Parameters
 SCOUT_SKIP_FRAMES = 5
 SCOUT_SCALE = 0.5
-MIN_RALLY_DURATION = 8.0  # Minimum rally duration (seconds)
+MIN_RALLY_DURATION = 4.0  # Minimum rally duration (seconds)
 
 # Pose Tracking Parameters
 YOLO_IMGSZ = 1024
