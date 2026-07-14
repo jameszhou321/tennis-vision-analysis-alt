@@ -1,7 +1,7 @@
-"""extract_frames.py — 预提取全帧 JPEG，供 dataset.py 直接读图（跳过视频 seek）
+"""extract_frames.py — Pre-extract full-frame JPEGs for direct reading in dataset.py (skipping video seeking)
 
-用法: python extract_frames.py [--data_root ...]
-输出: 每个回合目录下生成 frames/{000000.jpg, ...}
+Usage: python extract_frames.py [--data_root ...]
+Output: Generates frames/{000000.jpg, ...} under each rally directory
 """
 import os
 import ctypes
@@ -13,7 +13,7 @@ from tqdm import tqdm
 
 def get_short_path(path):
     buf = ctypes.create_unicode_buffer(512)
-    if not hasattr(ctypes, "windll"):  # 非 Windows 直接用原路径
+    if not hasattr(ctypes, "windll"):  # Use original path directly on non-Windows systems
         return path
     ctypes.windll.kernel32.GetShortPathNameW(path, buf, 512)
     return buf.value or path
@@ -33,7 +33,7 @@ def extract_clip(clip_dir):
     if not os.path.exists(video_path):
         return "no_video"
 
-    # 断点续跑：目录存在且帧数与视频一致则跳过
+    # Resume from breakpoint: skip if directory exists and the frame count matches the video
     short_path = get_short_path(video_path)
     cap = cv2.VideoCapture(short_path)
     total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
@@ -55,7 +55,7 @@ def extract_clip(clip_dir):
         ret, frame = cap.read()
         if not ret:
             break
-        # resize 到训练用分辨率，节省磁盘 & 加快读取
+        # Resize to training resolution to save disk space & accelerate loading speed
         frame = cv2.resize(frame, (320, 192))
         save_jpg(os.path.join(frames_dir, f"{idx:06d}.jpg"), frame)
         idx += 1
@@ -74,7 +74,7 @@ def main():
                    if os.path.isdir(os.path.join(args.data_root, d)))
 
     skipped = done = failed = 0
-    for clip_name in tqdm(clips, desc="提取全帧"):
+    for clip_name in tqdm(clips, desc="Extracting full frames"):
         result = extract_clip(os.path.join(args.data_root, clip_name))
         if result == "skip":
             skipped += 1
@@ -82,9 +82,9 @@ def main():
             done += 1
         else:
             failed += 1
-            print(f"  跳过 {clip_name}: {result}")
+            print(f"  Skipped {clip_name}: {result}")
 
-    print(f"\n完成: {done} 个回合已提取，{skipped} 个已跳过，{failed} 个失败。")
+    print(f"\nCompleted: {done} rallies extracted, {skipped} skipped, {failed} failed.")
 
 
 if __name__ == "__main__":

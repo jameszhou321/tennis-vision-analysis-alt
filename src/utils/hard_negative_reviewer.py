@@ -1,20 +1,20 @@
 """
-hard_negative_reviewer.py — 交互式帧审核 + 标注工具（合二为一）
+hard_negative_reviewer.py — Interactive frame review + annotation tool (combined)
 
-操作说明：
-    左键拖拽        : 画检测框
-    0               : 将最后一个框标为 player_near (class 0)
-    1               : 将最后一个框标为 player_far  (class 1)
-    Z               : 撤销最后一个框
-    K / Space       : 保存标注并跳到下一张
-    D               : 删除此帧（不合格），标记片段，跳下一张
-    A / ←           : 回到上一张
-    Q / ESC         : 保存进度并退出
+Controls:
+    Left-click drag  : draw a detection box
+    0                : label the last box as player_near (class 0)
+    1                : label the last box as player_far  (class 1)
+    Z                : undo the last box
+    K / Space        : save annotations and go to the next image
+    D                : delete this frame (unqualified), flag the clip, go to the next image
+    A / ←            : go back to the previous image
+    Q / ESC          : save progress and quit
 
-输出：
-    data/person_sorter/hard_negatives/labels/  — YOLO 格式标注 txt
-    logs/low_quality_clips.txt                 — 不合格片段列表
-    data/person_sorter/hard_negatives/reviewed.txt — 断点续跑
+Outputs:
+    data/person_sorter/hard_negatives/labels/  — YOLO-format annotation txt files
+    logs/low_quality_clips.txt                 — list of unqualified clips
+    data/person_sorter/hard_negatives/reviewed.txt — resume/checkpoint state
 """
 
 import os
@@ -34,7 +34,7 @@ MANIFEST_PATH = os.path.join(_PROJECT_DIR, "data", "person_sorter", "hard_negati
 REVIEWED_PATH = os.path.join(_PROJECT_DIR, "data", "person_sorter", "hard_negatives", "reviewed.txt")
 LOW_QUALITY_PATH = os.path.join(_PROJECT_DIR, "logs", "low_quality_clips.txt")
 
-CLASS_COLORS = {0: (0, 200, 255), 1: (200, 100, 255)}  # near=黄, far=紫
+CLASS_COLORS = {0: (0, 200, 255), 1: (200, 100, 255)}  # near=yellow, far=purple
 CLASS_NAMES  = {0: "player_near", 1: "player_far"}
 
 
@@ -97,11 +97,11 @@ def save_labels(img_path: Path, boxes: list):
 
 
 def render(base_frame, boxes, drawing, pt1, pt2, idx, total, filename, conf):
-    """重绘当前帧：已有框 + 正在画的框 + UI 提示"""
+    """Redraw the current frame: existing boxes + the box currently being drawn + UI hints"""
     frame = base_frame.copy()
     h, w = frame.shape[:2]
 
-    # 已确认的框
+    # Confirmed boxes
     for cls, x1, y1, x2, y2 in boxes:
         color = CLASS_COLORS.get(cls, (255, 255, 255))
         cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
@@ -109,11 +109,11 @@ def render(base_frame, boxes, drawing, pt1, pt2, idx, total, filename, conf):
         cv2.putText(frame, label, (x1, max(y1 - 5, 12)),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1)
 
-    # 正在拖拽的框（白色虚线效果用白色代替）
+    # Box currently being dragged (white is used in place of a dashed effect)
     if drawing and pt1 and pt2:
         cv2.rectangle(frame, pt1, pt2, (255, 255, 255), 1)
 
-    # 底部信息栏
+    # Bottom info bar
     overlay = frame.copy()
     cv2.rectangle(overlay, (0, h - 90), (w, h), (0, 0, 0), -1)
     cv2.addWeighted(overlay, 0.55, frame, 0.45, 0, frame)
@@ -132,8 +132,8 @@ def render(base_frame, boxes, drawing, pt1, pt2, idx, total, filename, conf):
 
 def main():
     if not os.path.exists(IMAGES_DIR):
-        print(f"图像目录不存在: {IMAGES_DIR}")
-        print("请先运行 hard_negative_extractor.py 提取帧")
+        print(f"Image directory does not exist: {IMAGES_DIR}")
+        print("Please run hard_negative_extractor.py first to extract frames")
         return
 
     all_images = sorted(
@@ -142,7 +142,7 @@ def main():
         if name.lower().endswith(".jpg")
     )
     if not all_images:
-        print("没有找到待审核的帧图像")
+        print("No frame images found awaiting review")
         return
 
     manifest    = load_manifest()
@@ -151,11 +151,11 @@ def main():
 
     pending = [p for p in all_images if p.name not in reviewed]
     if not pending:
-        print("所有帧已审核完毕！")
-        print(f"不合格片段共 {len(low_quality)} 个，见: {LOW_QUALITY_PATH}")
+        print("All frames have been reviewed!")
+        print(f"Total unqualified clips: {len(low_quality)}, see: {LOW_QUALITY_PATH}")
         return
 
-    print(f"待审核: {len(pending)} 帧 (已跳过 {len(reviewed)} 帧)")
+    print(f"Pending review: {len(pending)} frames ({len(reviewed)} frames already skipped)")
 
     conf_map = {}
     if os.path.exists(MANIFEST_PATH):
@@ -167,7 +167,7 @@ def main():
     cv2.namedWindow(win, cv2.WINDOW_NORMAL)
     cv2.resizeWindow(win, 1280, 720)
 
-    # 鼠标状态
+    # Mouse state
     mouse = {"drawing": False, "pt1": None, "pt2": None, "boxes": []}
 
     def on_mouse(event, x, y, flags, param):
@@ -183,14 +183,15 @@ def main():
             x1, y1 = mouse["pt1"]
             x2, y2 = mouse["pt2"]
             if abs(x2 - x1) > 5 and abs(y2 - y1) > 5:
-                # 自动分配类别：没有0就画0，有0没有1就画1
+                # Auto-assign class: draw class 0 if it doesn't exist yet;
+                # if 0 exists but 1 doesn't, draw class 1
                 existing = {b[0] for b in mouse["boxes"]}
                 if 0 not in existing:
                     cls = 0
                 elif 1 not in existing:
                     cls = 1
                 else:
-                    cls = 0  # 超过两个框时循环从0开始
+                    cls = 0  # cycle back to 0 once more than two boxes exist
                 mouse["boxes"].append((cls, min(x1,x2), min(y1,y2), max(x1,x2), max(y1,y2)))
 
     cv2.setMouseCallback(win, on_mouse)
@@ -217,15 +218,15 @@ def main():
             cv2.imshow(win, frame)
             key = cv2.waitKey(30) & 0xFF
 
-            if key == 255:  # 无按键
+            if key == 255:  # no key pressed
                 continue
 
-            # 撤销最后一个框
+            # Undo the last box
             if key in (ord('z'), ord('Z')):
                 if mouse["boxes"]:
                     mouse["boxes"].pop()
 
-            # 保存标注，跳下一张
+            # Save annotations, go to next image
             elif key in (ord('k'), ord('K'), 32):
                 if mouse["boxes"]:
                     save_labels(img_path, mouse["boxes"])
@@ -234,7 +235,7 @@ def main():
                 idx += 1
                 break
 
-            # 删除帧，标记不合格
+            # Delete the frame, flag it as unqualified
             elif key in (ord('d'), ord('D')):
                 try:
                     os.remove(str(img_path))
@@ -248,7 +249,7 @@ def main():
                 idx += 1
                 break
 
-            # 回到上一张
+            # Go back to the previous image
             elif key in (ord('a'), ord('A'), 81, 2):
                 if history:
                     last_path, last_action = history.pop()
@@ -260,21 +261,21 @@ def main():
                     idx = max(0, idx - 1)
                 break
 
-            # 退出
+            # Quit
             elif key in (ord('q'), ord('Q'), 27):
                 cv2.destroyAllWindows()
                 save_reviewed(reviewed)
                 save_low_quality(low_quality)
                 remaining = len([p for p in all_images if p.name not in reviewed])
-                print(f"\n进度已保存，剩余 {remaining} 帧未审核")
-                print(f"不合格片段: {len(low_quality)} 个 -> {LOW_QUALITY_PATH}")
+                print(f"\nProgress saved, {remaining} frames remaining unreviewed")
+                print(f"Unqualified clips: {len(low_quality)} -> {LOW_QUALITY_PATH}")
                 return
 
     cv2.destroyAllWindows()
     save_reviewed(reviewed)
     save_low_quality(low_quality)
-    print(f"\n全部审核完毕！不合格片段: {len(low_quality)} 个 -> {LOW_QUALITY_PATH}")
-    print(f"标注文件保存在: {LABELS_DIR}")
+    print(f"\nAll reviews complete! Unqualified clips: {len(low_quality)} -> {LOW_QUALITY_PATH}")
+    print(f"Annotation files saved to: {LABELS_DIR}")
 
 
 if __name__ == "__main__":

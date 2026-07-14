@@ -1,4 +1,4 @@
-"""action_head.py — 动作分类头与关键帧检测头（结构相同）"""
+"""action_head.py — Action Classification Head and Keyframe Detection Head (Identical Architecture)"""
 import torch.nn as nn
 
 

@@ -1,6 +1,6 @@
-"""side_by_side_viewer.py — 双视图对比播放器
+"""side_by_side_viewer.py — Dual-view Comparison Player
 
-功能：并排显示原始视频与追踪结果视频，用于直观对比效果
+Functionality: Displays the raw video side-by-side with the tracking result video for intuitive visual comparison.
 """
 import cv2
 import json
@@ -10,9 +10,9 @@ from scipy.optimize import least_squares
 from collections import defaultdict, deque
 
 # =====================================================================
-# 1. 全局配置与物理映射常量
+# 1. Global Configurations and Physical Mapping Constants
 # =====================================================================
-# 注意：路径前面加了 r，完美解决 \c 转义报错
+# Note: Added prefix 'r' to the path to perfectly resolve the '\c' escape error
 DATASET_ROOT = "data/rallies_annotated"
 
 COURT_PHYSICAL = np.array([
@@ -29,7 +29,7 @@ POSE_PAIRS = [(15, 13), (13, 11), (16, 14), (14, 12), (11, 12),
 
 
 # =====================================================================
-# 2. 核心数学工具
+# 2. Core Mathematical Utilities
 # =====================================================================
 def get_homography(court_data):
     if not court_data: return None
@@ -57,7 +57,7 @@ def get_homography(court_data):
 
 def extract_feet_pos(player):
     bx = player["bbox"]
-    feet_px = np.array([(bx[0] + bx[2]) / 2, bx[3]])  # 兜底逻辑
+    feet_px = np.array([(bx[0] + bx[2]) / 2, bx[3]])  # Fallback logic
     pose = player.get("pose")
     if pose:
         kp = np.array(pose)
@@ -75,7 +75,7 @@ def extract_feet_pos(player):
 
 
 # =====================================================================
-# 3. 审查工作台 GUI 引擎
+# 3. Review Dashboard GUI Engine
 # =====================================================================
 class ReviewDashboard:
     def __init__(self, json_files):
@@ -86,7 +86,7 @@ class ReviewDashboard:
         self.current_frame = 0
         self.frames_data = {}
 
-        # 交互状态
+        # Interaction Status
         self.is_paused = False
         self.need_video_reload = True
         self.list_scroll = 0
@@ -94,7 +94,7 @@ class ReviewDashboard:
         self.last_H = None
         self.radar_history = defaultdict(lambda: deque(maxlen=30))
 
-        # UI 尺寸布局 (总尺寸 1624 x 720)
+        # UI Layout Dimensions (Total size: 1624 x 720)
         self.W_LIST = 250
         self.W_VID = 1024
         self.H_VID = 576
@@ -124,8 +124,8 @@ class ReviewDashboard:
         self.need_video_reload = False
 
     def mouse_event(self, event, x, y, flags, param):
-        """核心交互：处理所有的鼠标点击、拖拽和滚轮滑动"""
-        # 1. 列表区域交互 (x < 250)
+        """Core Interaction: Handles all mouse clicks, dragging, and wheel scrolling"""
+        # 1. Playlist Panel Interaction (x < 250)
         if x < self.W_LIST:
             if event == cv2.EVENT_MOUSEWHEEL:
                 if flags > 0:
@@ -138,7 +138,7 @@ class ReviewDashboard:
                     self.current_idx = click_idx
                     self.need_video_reload = True
 
-        # 2. 进度条区域交互 (中下方区域)
+        # 2. Timeline Bar Interaction (Bottom Middle Area)
         elif self.W_LIST <= x <= self.W_LIST + self.W_VID and y > self.H_VID:
             if event == cv2.EVENT_LBUTTONDOWN:
                 self.is_dragging = True
@@ -149,28 +149,28 @@ class ReviewDashboard:
                 self.is_dragging = False
 
     def set_frame_by_mouse(self, x):
-        """将鼠标的 X 坐标映射为视频帧数"""
-        bar_x = x - self.W_LIST - 50  # 减去边距
+        """Maps the mouse X coordinate to video frame index"""
+        bar_x = x - self.W_LIST - 50  # Subtract margin
         bar_w = self.W_VID - 100
         progress = np.clip(bar_x / bar_w, 0, 1)
         self.current_frame = int(progress * (self.total_frames - 1))
         if self.cap: self.cap.set(cv2.CAP_PROP_POS_FRAMES, self.current_frame)
 
     def draw_list(self, canvas):
-        """绘制左侧播放列表"""
+        """Draws the left playlist panel"""
         canvas[0:self.H_TOTAL, 0:self.W_LIST] = (30, 35, 30)
         cv2.putText(canvas, "PLAYLIST", (20, 35), 0, 0.8, (255, 255, 255), 2)
         cv2.line(canvas, (10, 45), (self.W_LIST - 10, 45), (100, 100, 100), 1)
 
-        for i in range(20):  # 最多显示 20 项
+        for i in range(20):  # Displays up to 20 items
             idx = self.list_scroll + i
             if idx >= len(self.files): break
 
             y_pos = 75 + i * 35
-            name = self.files[idx].parent.name[:20]  # 截断过长名字
+            name = self.files[idx].parent.name[:20]  # Truncate overly long names
             color = (200, 200, 200)
 
-            # 高亮当前选中的视频
+            # Highlight the currently selected video
             if idx == self.current_idx:
                 cv2.rectangle(canvas, (5, y_pos - 25), (self.W_LIST - 5, y_pos + 5), (80, 120, 80), -1)
                 color = (255, 255, 255)
@@ -178,11 +178,11 @@ class ReviewDashboard:
             cv2.putText(canvas, f"{idx + 1}. {name}", (15, y_pos - 5), 0, 0.5, color, 1)
 
     def draw_timeline(self, canvas):
-        """绘制下方时间轴面板"""
+        """Draws the bottom timeline panel"""
         t_y = self.H_VID
         canvas[t_y:self.H_TOTAL, self.W_LIST:self.W_LIST + self.W_VID] = (40, 40, 45)
 
-        # 播放状态与提示文字
+        # Playback state and info text
         state_str = "PAUSED" if self.is_paused else "PLAYING"
         color_state = (0, 0, 255) if self.is_paused else (0, 255, 0)
         cv2.putText(canvas, f"STATUS: {state_str}", (self.W_LIST + 50, t_y + 40), 0, 0.7, color_state, 2)
@@ -191,7 +191,7 @@ class ReviewDashboard:
         cv2.putText(canvas, "Controls: [SPACE] Play/Pause | [A/D] Step Frame | [Mouse] Drag Timeline",
                     (self.W_LIST + 50, t_y + 120), 0, 0.5, (150, 150, 150), 1)
 
-        # 进度条轨道与滑块
+        # Timeline track and slider
         bar_y = t_y + 70
         bar_w = self.W_VID - 100
         bar_start_x = self.W_LIST + 50
@@ -218,21 +218,21 @@ class ReviewDashboard:
                 ret, frame = self.cap.read()
                 if not ret: frame = np.zeros((720, 1280, 3), dtype=np.uint8)
 
-            # 准备全局画布
+            # Prepare global canvas
             canvas = np.zeros((self.H_TOTAL, self.W_TOTAL, 3), dtype=np.uint8)
             f_data = self.frames_data.get(self.current_frame, {})
 
-            # ================= 渲染主视角 =================
+            # ================= Render Main Viewport =================
             v_frame = cv2.resize(frame, (self.W_VID, self.H_VID))
 
-            # 缩放因子：因为画面被 resize 了，画线的坐标也得跟着缩放
+            # Scale factors: Because the frame was resized, the drawing coordinates must scale accordingly
             sx, sy = self.W_VID / frame.shape[1], self.H_VID / frame.shape[0]
 
             court = f_data.get("court")
             H = get_homography(court)
             if H is not None: self.last_H = H
 
-            # 画球场 (修复 NoneType 报错)
+            # Draw the tennis court line graphics (Fixed NoneType crash error)
             if court is not None:
                 for l in COURT_LINES:
                     if l[0] < len(court) and l[1] < len(court):
@@ -255,7 +255,7 @@ class ReviewDashboard:
                                 cv2.line(v_frame, (int(p1[0] * sx), int(p1[1] * sy)),
                                          (int(p2[0] * sx), int(p2[1] * sy)), (0, 0, 255), 2)
 
-                # 映射到雷达
+                # Project coordinates to Top-Down Radar View
                 if self.last_H is not None:
                     feet = extract_feet_pos(player)
                     pt = np.array([[[feet[0], feet[1]]]], dtype=np.float32)
@@ -264,11 +264,11 @@ class ReviewDashboard:
 
             canvas[0:self.H_VID, self.W_LIST:self.W_LIST + self.W_VID] = v_frame
 
-            # ================= 渲染扩容版上帝视角 =================
+            # ================= Render Extended Top-Down Radar View =================
             radar = np.zeros((self.H_TOTAL, self.W_RADAR, 3), dtype=np.uint8)
             cv2.rectangle(radar, (0, 0), (self.W_RADAR, self.H_TOTAL), (35, 55, 35), -1)
 
-            # 雷达 Y 轴放到了极大的空间，完美包容退网打法
+            # Radar Y-axis is extended to a massive spatial window to completely incorporate deep baseline defensive playstyles
             scale = 16
             cx, cy = self.W_RADAR // 2, self.H_TOTAL // 2 - 30
             hw, hh = 5.485 * scale, 11.885 * scale
@@ -276,7 +276,7 @@ class ReviewDashboard:
             cv2.line(radar, (int(cx - hw), cy), (int(cx + hw), cy), (255, 255, 255), 2)
             cv2.putText(radar, "Expanded Baseline Runoff", (10, 30), 0, 0.6, (150, 150, 150), 1)
 
-            # 绘制历史拖尾与当前点
+            # Render historical tail tracking paths and current position points
             for pid, hist in self.radar_history.items():
                 pts = list(hist)
                 for i in range(1, len(pts)):
@@ -290,13 +290,13 @@ class ReviewDashboard:
 
             canvas[0:self.H_TOTAL, self.W_LIST + self.W_VID:self.W_TOTAL] = radar
 
-            # ================= 渲染 UI 组件 =================
+            # ================= Render Component Components =================
             self.draw_list(canvas)
             self.draw_timeline(canvas)
 
             cv2.imshow(self.window_name, canvas)
 
-            # ================= 键盘监听 =================
+            # ================= Keyboard Events Listener =================
             key = cv2.waitKey(20) & 0xFF
             if key == 27 or key == ord('q'):
                 break
@@ -315,7 +315,7 @@ if __name__ == "__main__":
     base_path = Path(DATASET_ROOT)
     json_files = list(base_path.rglob("tracking_data.json"))
     if not json_files:
-        print("未找到 JSON 数据文件。")
+        print("JSON data files not found.")
     else:
         app = ReviewDashboard(json_files)
         app.run()

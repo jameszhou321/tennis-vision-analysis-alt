@@ -1,4 +1,4 @@
-"""异步图像增强缓冲区：将增强从 DataLoader worker 分离到独立线程池。"""
+"""Async image augmentation buffer: decoupling augmentations from DataLoader workers into an independent thread pool."""
 from concurrent.futures import ThreadPoolExecutor
 from queue import Queue
 import torch
@@ -7,7 +7,7 @@ from dataset import _apply_augmentations
 
 
 def _augment_one(packed):
-    """增强一条 packed [T, 3, 320, 960] uint8。"""
+    """Augment a single packed item of shape [T, 3, 320, 960] uint8."""
     T = packed.shape[0]
     out = torch.empty_like(packed)
     panels = [(0, 320), (320, 640), (640, 960)]
@@ -21,7 +21,7 @@ def _augment_one(packed):
 
 
 def _augment_batch(batch):
-    """增强一个 batch。packed: [B, T, 3, 320, 960]"""
+    """Augment a single batch. packed: [B, T, 3, 320, 960]"""
     pose, packed, labels, kf_labels = batch
     B = packed.shape[0]
     parts = [_augment_one(packed[b]) for b in range(B)]
@@ -30,10 +30,11 @@ def _augment_batch(batch):
 
 
 class AugmentBuffer:
-    """异步增强缓冲区。
+    """Asynchronous augmentation buffer.
 
-    包装 DataLoader，用线程池在后台对已取出的 batch 做增强，
-    维持一个预增强队列，避免 GPU 等待 CPU 增强。
+    Wraps a DataLoader, utilizing a thread pool to perform augmentations on fetched batches 
+    in the background, maintaining a pre-augmented queue to prevent the GPU from waiting 
+    for CPU-bound augmentations.
     """
     def __init__(self, dataloader, num_threads=4, prefetch=3):
         self.dataloader = dataloader
@@ -51,11 +52,11 @@ class AugmentBuffer:
             except StopIteration:
                 buf.put(None)
 
-        # 预填充缓冲区
+        # Pre-fill the buffer
         for _ in range(self.prefetch):
             _submit()
 
-        # 消费循环
+        # Consumption loop
         while True:
             item = buf.get()
             if item is None:

@@ -1,4 +1,4 @@
-"""test_matrix.py — 混淆矩阵评估脚本"""
+"""test_matrix.py — Confusion Matrix Evaluation Script"""
 import sys
 import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -16,11 +16,12 @@ from dataset import TennisActionDataset
 from model_main import MSTFormer
 from config import load_config
 
-plt.rcParams['font.sans-serif'] = ['SimHei']
+# Set up standard fonts for visualization compatibility
+plt.rcParams['font.sans-serif'] = ['DejaVu Sans', 'Arial']
 plt.rcParams['axes.unicode_minus'] = False
 
 _MST_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))   # mst/
-_PROJECT_DIR = os.path.dirname(os.path.dirname(os.path.dirname(_MST_DIR)))  # 项目根
+_PROJECT_DIR = os.path.dirname(os.path.dirname(os.path.dirname(_MST_DIR)))  # Project root
 
 
 def split_dataset(data_root, train_ratio=0.8, seed=42):
@@ -57,7 +58,7 @@ def split_dataset(data_root, train_ratio=0.8, seed=42):
 def evaluate_and_plot(yaml_path=None):
     cfg = load_config(yaml_path)
     device = cfg["device"]
-    classes = ["待机", "正手", "反手", "发球", "移动"]
+    classes = ["Idle", "Forehand", "Backhand", "Serve", "Move"]
 
     weights_path = os.path.join(_PROJECT_DIR, "models", "action", "mst_former_final.pth")
 
@@ -73,9 +74,9 @@ def evaluate_and_plot(yaml_path=None):
     model = MSTFormer(cfg).to(device)
     if os.path.exists(weights_path):
         model.load_state_dict(torch.load(weights_path, map_location=device))
-        print(f"成功加载模型权重: {weights_path}")
+        print(f"Successfully loaded model weights from: {weights_path}")
     else:
-        print(f"找不到权重文件 {weights_path}")
+        print(f"Could not find weights file: {weights_path}")
         return
     model.eval()
 
@@ -94,15 +95,15 @@ def evaluate_and_plot(yaml_path=None):
                 all_labels.extend(labels[mask].cpu().numpy())
         return all_labels, all_preds
 
-    print("\n正在评估训练集...")
+    print("\nEvaluating training set...")
     train_true, train_pred = get_predictions(train_loader, "Train Eval")
-    print("\n正在评估测试集...")
+    print("\nEvaluating test set...")
     test_true, test_pred = get_predictions(test_loader, "Test Eval")
 
     if train_true:
-        print(f"\n训练集准确率: {accuracy_score(train_true, train_pred)*100:.2f}%")
+        print(f"\nTrain Accuracy: {accuracy_score(train_true, train_pred)*100:.2f}%")
     if test_true:
-        print(f"测试集准确率: {accuracy_score(test_true, test_pred)*100:.2f}%")
+        print(f"Test Accuracy: {accuracy_score(test_true, test_pred)*100:.2f}%")
 
     def plot_cm(y_true, y_pred, title):
         cm = confusion_matrix(y_true, y_pred, labels=[0, 1, 2, 3, 4], normalize="true")
@@ -110,13 +111,13 @@ def evaluate_and_plot(yaml_path=None):
         sns.heatmap(cm, annot=True, fmt=".2%", cmap="Blues", vmin=0, vmax=1,
                     xticklabels=classes, yticklabels=classes, annot_kws={"size": 12})
         plt.title(title, fontsize=16)
-        plt.ylabel("真实动作", fontsize=14)
-        plt.xlabel("模型预测", fontsize=14)
+        plt.ylabel("Ground Truth", fontsize=14)
+        plt.xlabel("Predicted Label", fontsize=14)
         plt.tight_layout()
         plt.show()
 
-    plot_cm(train_true, train_pred, "训练集混淆矩阵")
-    plot_cm(test_true, test_pred, "测试集混淆矩阵")
+    plot_cm(train_true, train_pred, "Training Set Confusion Matrix")
+    plot_cm(test_true, test_pred, "Test Set Confusion Matrix")
 
 
 if __name__ == "__main__":

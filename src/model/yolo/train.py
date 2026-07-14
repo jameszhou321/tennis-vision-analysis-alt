@@ -1,11 +1,11 @@
 """
-YOLO 单帧动作分类 — 训练入口
+YOLO Single-Frame Action Classification — Training Entry Point
 
-用法:
-  cd 项目标注与测试
+Usage:
+  cd Project_Annotation_and_Testing
   .venv/Scripts/python src/model/yolo/train.py
 
-产出: models/action/yolo_single_frame/<timestamp>/
+Outputs: models/action/yolo_single_frame/<timestamp>/
   ├── best.pth
   ├── final.pth
   ├── train_log.csv
@@ -23,7 +23,7 @@ from torch.optim.lr_scheduler import CosineAnnealingLR, LinearLR, SequentialLR
 from tqdm import tqdm
 import numpy as np
 
-# 添加搜索路径使 ultralytics 可用
+# Add the project search path to make ultralytics available
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../../.."))
 os.environ.setdefault("PYTORCH_ALLOC_CONF", "expandable_segments:True")
 torch.backends.cuda.enable_flash_sdp(True)
@@ -32,7 +32,7 @@ torch.backends.cuda.enable_mem_efficient_sdp(True)
 from dataset import create_datasets, split_dataset, collect_samples
 from model import YoloFrameClassifier
 
-# ── 配置 ──────────────────────────────────────────────────────────────────────
+# ── Configuration ─────────────────────────────────────────────────────────────
 DATA_ROOT = "data/rallies_train"
 WEIGHTS_PATH = "models/yolo/yolo11n.pt"
 NUM_CLASSES = 5
@@ -47,10 +47,10 @@ UNFREEZE_BACKBONE = True
 IMG_SIZE = 224
 NUM_WORKERS = 2
 
-# 类别权重（与 MST 训练一致）
+# Class weights (aligned with MST training configurations)
 CLASS_WEIGHTS = [1.0, 4.0, 5.0, 4.0, 1.5]
 
-# ── 输出 ──────────────────────────────────────────────────────────────────────
+# ── Outputs ───────────────────────────────────────────────────────────────────
 _MST_DIR = os.path.dirname(os.path.abspath(__file__))
 _PROJECT_DIR = os.path.dirname(os.path.dirname(os.path.dirname(_MST_DIR)))
 RUN_DIR = os.path.join(_PROJECT_DIR, "models", "action", "yolo_single_frame",
@@ -65,7 +65,7 @@ def train():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Device: {device}")
 
-    # 数据
+    # Data
     train_ds, test_ds = create_datasets(DATA_ROOT, TRAIN_RATIO)
 
     accum = VIRTUAL_BATCH_SIZE // BATCH_SIZE
@@ -76,13 +76,13 @@ def train():
                              num_workers=NUM_WORKERS, pin_memory=True,
                              persistent_workers=NUM_WORKERS > 0)
 
-    # 模型
+    # Model
     model = YoloFrameClassifier(WEIGHTS_PATH, NUM_CLASSES, unfreeze_backbone=UNFREEZE_BACKBONE,
                                  img_size=IMG_SIZE).to(device)
     print(f"Model: {sum(p.numel() for p in model.parameters()):,} params, "
           f"{sum(p.numel() for p in model.parameters() if p.requires_grad):,} trainable")
 
-    # 损失 + 优化器
+    # Loss + Optimizer
     weights = torch.tensor(CLASS_WEIGHTS, dtype=torch.float32).to(device)
     criterion = nn.CrossEntropyLoss(weight=weights)
 
@@ -97,10 +97,10 @@ def train():
 
     scaler = torch.amp.GradScaler("cuda")
 
-    # CSV 日志初始化
+    # CSV Log Initialization
     log_fields = ["epoch", "lr", "train_loss", "train_acc", "test_acc",
                    "precision", "recall", "f1"]
-    # 每类指标
+    # Metrics per class
     for n in ["idle", "fh", "bh", "serve", "move"]:
         log_fields.extend([f"pred_{n}", f"gt_{n}"])
     log_fields.append("best_metric")
@@ -145,7 +145,7 @@ def train():
         train_acc = correct / total * 100
         avg_loss = total_loss / len(train_loader)
 
-        # 测试
+        # Testing
         model.eval()
         t_correct = t_total = 0
         all_preds, all_labels = [], []
@@ -165,11 +165,11 @@ def train():
         all_preds = torch.cat(all_preds)
         all_labels = torch.cat(all_labels)
 
-        # 每类 P/R/F1
+        # Frame counts per class P/R/F1
         pred_counts = torch.bincount(all_preds, minlength=NUM_CLASSES).tolist()
         gt_counts = torch.bincount(all_labels, minlength=NUM_CLASSES).tolist()
 
-        # 宏平均
+        # Macro Averaging
         per_class_f1 = []
         for c in range(NUM_CLASSES):
             tp = ((all_preds == c) & (all_labels == c)).sum().item()
@@ -180,7 +180,7 @@ def train():
             f1 = 2 * prec * rec / (prec + rec) if (prec + rec) > 0 else 0.0
             per_class_f1.append(f1)
 
-        macro_prec = sum(per_class_f1) / NUM_CLASSES  # 近似
+        macro_prec = sum(per_class_f1) / NUM_CLASSES  # Approximation
 
         lr_now = optimizer.param_groups[0]["lr"]
         print(f"\n  LR={lr_now:.2e} | Train Loss={avg_loss:.4f} | "
@@ -188,7 +188,7 @@ def train():
         print(f"  Pred: {pred_counts}")
         print(f"  GT:   {gt_counts}")
 
-        # 保存最优
+        # Save Best Model Weights
         if test_acc > best_acc:
             best_acc = test_acc
             best_state = {k: v.cpu().clone() for k, v in model.state_dict().items()}
@@ -200,7 +200,7 @@ def train():
             save_thread.start()
             print(f"  New best: {test_acc:.2f}%")
 
-        # CSV 日志
+        # CSV Logging
         row = {"epoch": epoch + 1, "lr": f"{lr_now:.2e}",
                "train_loss": f"{avg_loss:.4f}",
                "train_acc": f"{train_acc:.2f}", "test_acc": f"{test_acc:.2f}",
@@ -217,12 +217,12 @@ def train():
             csv.DictWriter(f, fieldnames=log_fields).writerow(row)
         print("-" * 70)
 
-    # 最终权重
+    # Save Final Weights
     torch.save(model.state_dict(), FINAL_PATH)
     if save_thread is not None:
         save_thread.join()
 
-    # 保存配置
+    # Save Runtime Metadata
     config_info = {
         "data_root": DATA_ROOT, "weights_path": WEIGHTS_PATH,
         "num_classes": NUM_CLASSES, "train_ratio": TRAIN_RATIO,

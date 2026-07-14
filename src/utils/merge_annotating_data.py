@@ -1,8 +1,8 @@
 """
-将 data/rallies_annotating/ 中的新标注数据合并到 data/rallies_annotated/。
-tracking_data.json → pose_data.json（含 court 字段）
-id=1 → near_player，id=2 → far_player
-rally 编号从 rallies_annotated 中最大编号+1 开始续编。
+Merge new annotation data from data/rallies_annotating/ into data/rallies_annotated/.
+tracking_data.json → pose_data.json (including 'court' field)
+id=1 → near_player, id=2 → far_player
+Rally numbering continues starting from the maximum index in rallies_annotated + 1.
 """
 import os
 import json
@@ -24,7 +24,7 @@ def _get_max_rally_num(dst_root):
 
 
 def _convert_tracking_to_pose(tracking_path):
-    """将 tracking_data.json 转换为 pose_data.json 格式（列表，按 frame_id 索引）。"""
+    """Convert tracking_data.json to pose_data.json format (list, indexed by frame_id)."""
     with open(tracking_path, "r", encoding="utf-8") as f:
         data = json.load(f)
 
@@ -54,7 +54,7 @@ def _convert_tracking_to_pose(tracking_path):
 
         pose_list[fid] = entry
 
-    # 填充空帧（frame_id 不连续时）
+    # Fill empty frames (in case frame_id is non-consecutive)
     result = []
     for i, entry in enumerate(pose_list):
         if entry is None:
@@ -67,7 +67,7 @@ def _convert_tracking_to_pose(tracking_path):
 
 def main():
     next_num = _get_max_rally_num(DST_ROOT) + 1
-    print(f"rallies_annotated 最大编号: {next_num - 1}，新 rally 从 {next_num} 开始编号")
+    print(f"Max index in rallies_annotated: {next_num - 1}, new rally starting from index {next_num}")
 
     copied = skipped = failed = 0
 
@@ -86,17 +86,17 @@ def main():
         for rally_dir in rally_dirs:
             src_rally = os.path.join(match_path, rally_dir)
 
-            # 提取时长后缀
+            # Extract duration suffix
             m = re.search(r"(\d+\.\d+s)$", rally_dir)
             duration = m.group(1) if m else "0.0s"
 
-            # 检查必要文件
+            # Check for required files
             tracking_path = os.path.join(src_rally, "tracking_data.json")
             anno_path = os.path.join(src_rally, "annotations.json")
             video_path = os.path.join(src_rally, "raw_clip.mp4")
 
             if not all(os.path.exists(p) for p in [tracking_path, anno_path, video_path]):
-                print(f"  [SKIP] {match_dir}/{rally_dir} — 缺少必要文件")
+                print(f"  [SKIP] {match_dir}/{rally_dir} — Missing required files")
                 skipped += 1
                 continue
 
@@ -104,7 +104,7 @@ def main():
             dst_rally = os.path.join(DST_ROOT, new_name)
 
             if os.path.exists(dst_rally):
-                print(f"  [SKIP] {new_name} — 目标已存在")
+                print(f"  [SKIP] {new_name} — Destination already exists")
                 skipped += 1
                 next_num += 1
                 continue
@@ -112,13 +112,13 @@ def main():
             try:
                 os.makedirs(dst_rally, exist_ok=True)
 
-                # 转换 pose 数据
+                # Convert pose data
                 pose_data = _convert_tracking_to_pose(tracking_path)
                 pose_out = os.path.join(dst_rally, "pose_data.json")
                 with open(pose_out, "w", encoding="utf-8") as f:
                     json.dump(pose_data, f, ensure_ascii=False)
 
-                # 复制其他文件
+                # Copy other files
                 shutil.copy2(anno_path, os.path.join(dst_rally, "annotations.json"))
                 shutil.copy2(video_path, os.path.join(dst_rally, "raw_clip.mp4"))
 
@@ -130,8 +130,8 @@ def main():
                 print(f"  [ERR]  {match_dir}/{rally_dir}: {e}")
                 failed += 1
 
-    print(f"\n完成：复制 {copied} 个，跳过 {skipped} 个，失败 {failed} 个")
-    print(f"rallies_annotated 下一个可用编号: {next_num}")
+    print(f"\nCompleted: Copied {copied}, Skipped {skipped}, Failed {failed}")
+    print(f"Next available index for rallies_annotated: {next_num}")
 
 
 if __name__ == "__main__":

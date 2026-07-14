@@ -1,5 +1,5 @@
-﻿# 组件对比：Cross Entropy Loss（对比 cmp_focal_loss.yaml）
-# 观察 CE vs Focal 在类别不均衡场景下的差异
+﻿# Component Comparison: Cross Entropy Loss (Compared against cmp_focal_loss.yaml)
+# Observe the difference between CE vs Focal Loss in class-imbalanced scenarios
 
 data_root: "data/rallies_train"
 crops_root: "data/rallies_train"
@@ -35,7 +35,7 @@ total_epochs: 40
 learning_rate: 1.0e-4
 weight_decay: 0.05
 warmup_epochs: 5
-loss: "cross_entropy"            # ← 变量：CE Loss
+loss: "cross_entropy"            # ← Variable: CE Loss
 focal_gamma: 2.0
 keyframe_loss_weight: 0.5
 

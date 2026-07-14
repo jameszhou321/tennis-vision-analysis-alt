@@ -1,7 +1,8 @@
-"""extract_crops.py — 预提取运动员裁剪图 + 生成 pose_data.json bbox
+"""extract_crops.py — Pre-extract athlete cropped images + generate pose_data.json bboxes
 
-用法: python extract_crops.py [--data_root ...] [--model ...]
-输出: 每个回合目录下生成 player1/{000000.jpg,...}、player2/{...}，并将 bbox 写入 pose_data.json
+Usage: python extract_crops.py [--data_root ...] [--model ...]
+Output: Generates player1/{000000.jpg,...} and player2/{...} under each rally directory, 
+        and writes bounding boxes into pose_data.json.
 """
 import os
 import json
@@ -17,7 +18,7 @@ CROP_SIZE = 320
 
 def get_short_path(path):
     buf = ctypes.create_unicode_buffer(512)
-    if not hasattr(ctypes, "windll"):  # 非 Windows 直接用原路径
+    if not hasattr(ctypes, "windll"):  # Use original path directly on non-Windows systems
         return path
     ctypes.windll.kernel32.GetShortPathNameW(path, buf, 512)
     return buf.value or path
@@ -31,15 +32,17 @@ def save_jpg(path, img):
 
 
 def crop_fixed_window(frame, cx, cy, win, h, w):
-    """以 (cx,cy) 为中心裁出 win×win 窗口，出界补黑，resize 到 CROP_SIZE×CROP_SIZE。"""
+    """Crops a win×win window centered at (cx, cy). Pads out-of-bounds regions with black, 
+    and resizes the result to CROP_SIZE×CROP_SIZE.
+    """
     half = win // 2
-    x1s, y1s = cx - half, cy - half   # 源坐标（可能为负）
+    x1s, y1s = cx - half, cy - half   # Source coordinates (could be negative)
     x2s, y2s = x1s + win, y1s + win
 
-    # 目标画布
+    # Target canvas
     canvas = np.zeros((win, win, 3), dtype=np.uint8)
 
-    # 源/目标的有效交叉区域
+    # Valid overlapping area between source and target
     sx1, sy1 = max(0, x1s), max(0, y1s)
     sx2, sy2 = min(w, x2s), min(h, y2s)
     dx1, dy1 = sx1 - x1s, sy1 - y1s
@@ -73,7 +76,7 @@ def extract_clip(clip_dir, model, placeholder):
     vid_h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
     base_win = round(vid_w / 6.4)
 
-    # 读取已有 pose_data.json（如果存在，保留 court 字段）
+    # Read existing pose_data.json if it exists to preserve the court field
     existing_pose = []
     if os.path.exists(pose_path):
         with open(pose_path, "r", encoding="utf-8") as f:
@@ -81,7 +84,7 @@ def extract_clip(clip_dir, model, placeholder):
             if not isinstance(existing_pose, list):
                 existing_pose = []
 
-    # ── 第一遍：检测，记录每帧的 (cx, cy, win, bbox) 或 None ──────────────────────
+    # ── First Pass: Detection, record (cx, cy, win, bbox) or None for each frame ──
     dets = []   # list of [slot0: dict|None, slot1: dict|None]
     while True:
         ret, frame = cap.read()
@@ -111,7 +114,7 @@ def extract_clip(clip_dir, model, placeholder):
         dets.append(frame_dets)
     cap.release()
 
-    # ── 线性插值补全缺失帧（只插值 cx/cy/win，bbox 保持 None）────────────────
+    # ── Linear Interpolation for Missing Frames (interpolates cx/cy/win only; bbox remains None) ──
     for slot in [0, 1]:
         known = [(i, dets[i][slot]) for i in range(len(dets)) if dets[i][slot] is not None]
         if not known:
@@ -134,7 +137,7 @@ def extract_clip(clip_dir, model, placeholder):
                 win = int(prev[1]["win"] + t * (nxt[1]["win"] - prev[1]["win"]))
                 dets[i][slot] = {"cx": cx, "cy": cy, "win": win, "bbox": None}
 
-    # ── 第二遍：按插值位置裁图并保存，同时构建 pose_data ─────────────────────
+    # ── Second Pass: Crop and save images based on interpolated positions, then construct pose_data ──
     cap = cv2.VideoCapture(short_path)
     pose_data = []
     frame_idx = 0
@@ -145,7 +148,7 @@ def extract_clip(clip_dir, model, placeholder):
         h, w = frame.shape[:2]
         name = f"{frame_idx:06d}.jpg"
 
-        # 保存裁剪图
+        # Save cropped images
         for slot, out_dir in enumerate([p1_dir, p2_dir]):
             det = dets[frame_idx][slot]
             if det:
@@ -154,23 +157,23 @@ def extract_clip(clip_dir, model, placeholder):
                 img = placeholder
             save_jpg(os.path.join(out_dir, name), img)
 
-        # 构建 pose_data 条目
+        # Build pose_data entry
         entry = {"frame": frame_idx}
 
-        # 保留已有的 court 字段
+        # Keep existing court field
         if frame_idx < len(existing_pose) and isinstance(existing_pose[frame_idx], dict):
             entry["court"] = existing_pose[frame_idx].get("court")
         else:
             entry["court"] = None
 
-        # 写入 near_player (slot=0, cls=0) 和 far_player (slot=1, cls=1)
+        # Write near_player (slot=0, cls=0) and far_player (slot=1, cls=1)
         near_det = dets[frame_idx][0]
         far_det = dets[frame_idx][1]
 
-        # 即使 bbox 是 None（插值帧），也写入结构，方便 rerun_pose_detection.py 处理
+        # Even if bbox is None (interpolated frame), write the structure to allow rerun_pose_detection.py to process it
         entry["near_player"] = {
             "bbox": near_det["bbox"] if near_det else None,
-            "keypoints": []  # 空列表，等待 rerun_pose_detection.py 填充
+            "keypoints": []  # Empty list, waiting to be filled by rerun_pose_detection.py
         }
 
         entry["far_player"] = {
@@ -182,7 +185,7 @@ def extract_clip(clip_dir, model, placeholder):
         frame_idx += 1
     cap.release()
 
-    # 保存 pose_data.json
+    # Save pose_data.json
     with open(pose_path, "w", encoding="utf-8") as f:
         json.dump(pose_data, f, ensure_ascii=False, indent=2)
 
@@ -197,7 +200,7 @@ def main():
     parser.add_argument("--model", default=os.path.join(_project_dir, "models", "person", "best.pt"))
     args = parser.parse_args()
 
-    print(f"加载 person 模型: {args.model}")
+    print(f"Loading person model: {args.model}")
     model = YOLO(args.model)
 
     placeholder = np.zeros((CROP_SIZE, CROP_SIZE, 3), dtype=np.uint8)
@@ -207,7 +210,7 @@ def main():
     clips.sort()
 
     skipped = done = failed = 0
-    for clip_name in tqdm(clips, desc="提取裁剪图"):
+    for clip_name in tqdm(clips, desc="Extracting crops"):
         clip_dir = os.path.join(args.data_root, clip_name)
         result = extract_clip(clip_dir, model, placeholder)
         if result == "skip":
@@ -216,9 +219,9 @@ def main():
             done += 1
         else:
             failed += 1
-            print(f"  跳过 {clip_name}: {result}")
+            print(f"  Skipped {clip_name}: {result}")
 
-    print(f"\n完成: {done} 个回合已提取，{skipped} 个已跳过，{failed} 个失败。")
+    print(f"\nCompleted: {done} rallies extracted, {skipped} skipped, {failed} failed.")
 
 
 if __name__ == "__main__":

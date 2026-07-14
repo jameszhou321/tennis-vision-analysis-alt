@@ -1,4 +1,4 @@
-"""player.py — 视频播放器，基于 QTimer + OpenCV 逐帧读取"""
+"""player.py — Video player based on QTimer + OpenCV frame-by-frame loading."""
 import ctypes
 import cv2
 import numpy as np
@@ -7,7 +7,7 @@ from PyQt5.QtCore import QTimer, pyqtSignal, QObject
 
 def _get_short_path(path: str) -> str:
     buf = ctypes.create_unicode_buffer(512)
-    if not hasattr(ctypes, "windll"):  # 非 Windows 直接用原路径
+    if not hasattr(ctypes, "windll"):  # Return original path on non-Windows platforms
         return path
     ctypes.windll.kernel32.GetShortPathNameW(path, buf, 512)
     return buf.value or path
@@ -100,7 +100,7 @@ class VideoPlayer(QObject):
         if ret:
             rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
             self.frame_changed.emit(self._current, rgb)
-            # 回退一帧，保持位置不变
+            # Step back one frame to keep the current index pointer unchanged
             self._cap.set(cv2.CAP_PROP_POS_FRAMES, self._current)
 
     def release(self):

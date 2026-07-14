@@ -1,7 +1,7 @@
-"""main.py — 批量视频处理主入口
+"""main.py — Batch Video Processing Main Entry Point
 
-功能：遍历 videos/ 目录，对每场比赛视频运行完整追踪流水线，支持断点续跑
-升级：集成了防死锁、多格式兼容的空间/姿态拉力状态检测器 (Spatial Rally Detector)
+Function: Traverses the videos/ directory, runs the full tracking pipeline for each match video, and supports checkpoints for resuming.
+Upgrade: Integrated a deadlock-proof, multi-format compatible Spatial Rally Detector.
 """
 import cv2
 import numpy as np
@@ -21,31 +21,33 @@ from pose_tracker import PoseTracker
 class SpatialRallyDetector:
     def __init__(self, fps=30, buffer_seconds=1.5, movement_threshold=3.0):
         """
-        根据球员的空间分布与移动状态，精准检测每一帧是处于击球对攻阶段（PLAYING）还是死球阶段（NOT PLAYING）
+        Accurately detects whether each frame is in the hitting rally phase (PLAYING) or dead ball phase (NOT PLAYING) 
+        based on the spatial distribution and movement status of the players.
         """
         self.fps = fps
         self.buffer_frames = int(fps * buffer_seconds)
         self.movement_threshold = movement_threshold
         
-        self.player_history = []  # 记录前几帧的球员中心点位置
+        self.player_history = []  # Records player center point locations from previous frames
         self.frames_since_active = self.buffer_frames
         self.is_playing = False
 
     def _extract_box(self, player_data):
         """
-        增强型防御性解包：确保无论 PoseTracker 返回字典、对象还是嵌套列表，均能稳定提取出 4 元素边界框
+        Enhanced defensive unpacking: Ensures a stable 4-element bounding box extraction regardless of whether 
+        PoseTracker returns a dictionary, an object, or a nested list.
         """
         if not player_data:
             return None
         try:
-            # 情况 1：标准字典格式
+            # Case 1: Standard dictionary format
             if isinstance(player_data, dict):
                 box = player_data.get("box")
                 if box is not None:
-                    if hasattr(box, "tolist"): box = box.tolist()  # 兼容 numpy 数组
+                    if hasattr(box, "tolist"): box = box.tolist()  # Compatible with numpy arrays
                     if isinstance(box, list) and len(box) >= 4:
                         return box[:4]
-            # 情况 2：带有 .box 属性的对象
+            # Case 2: Object with a .box attribute
             elif hasattr(player_data, "box"):
                 box = player_data.box
                 if hasattr(box, "tolist"): box = box.tolist()
@@ -57,17 +59,17 @@ class SpatialRallyDetector:
 
     def update(self, far_player_data, near_player_data):
         """
-        核心逻辑：根据当前帧两边球员的位置与运动幅度更新状态
+        Core logic: Updates the status according to the positions and movement ranges of the players on both sides in the current frame.
         """
         is_frame_active = False
 
         far_box = self._extract_box(far_player_data)
         near_box = self._extract_box(near_player_data)
 
-        # 1. 空间校验：场上必须同时识别到远端和近端球员
+        # 1. Spatial validation: Both far and near players must be identified on the court simultaneously
         if far_box is not None and near_box is not None:
             try:
-                # 计算两个球员在全球坐标系下的中心点
+                # Calculate the center points of the two players in global coordinates
                 f_cx = (far_box[0] + far_box[2]) / 2
                 f_cy = (far_box[1] + far_box[3]) / 2
                 n_cx = (near_box[0] + near_box[2]) / 2
@@ -79,27 +81,27 @@ class SpatialRallyDetector:
                 if len(self.player_history) > 4:
                     self.player_history.pop(0)
 
-                # 2. 运动校验：计算连续帧之间球员的移动速度 (Velocity)
+                # 2. Movement validation: Calculate the player movement velocity between consecutive frames
                 if len(self.player_history) >= 2:
-                    # 计算前后两帧远近端球员的位移
+                    # Calculate the displacements of the far and near players between the last two frames
                     disp_far = np.linalg.norm(self.player_history[-1][0] - self.player_history[-2][0])
                     disp_near = np.linalg.norm(self.player_history[-1][1] - self.player_history[-2][1])
                     max_displacement = max(disp_far, disp_near)
 
-                    # 如果球员处于高频折返、大范围奔跑，则判定此帧为活跃对攻帧
+                    # If the players are doing high-frequency changes of direction or running across a wide area, the frame is active
                     if max_displacement > self.movement_threshold:
                         is_frame_active = True
                         
-                # 3. 纵向相对位置校验（防并排或过于靠近的死球状态误判，阈值缩减至 50 更弹性）
+                # 3. Longitudinal relative position validation (prevents misjudging dead ball states when side-by-side or too close; threshold reduced to 50 for flexibility)
                 if abs(f_cy - n_cy) < 50:  
                     is_frame_active = False
             except Exception:
                 is_frame_active = False
         else:
-            # 球员数据丢失（如走出画面），默认不活跃
+            # Player data lost (e.g., walking out of frame), default to inactive
             is_frame_active = False
 
-        # 4. 时间平滑缓冲控制状态切换
+        # 4. Temporal smoothing buffer controls status transition
         if is_frame_active:
             self.is_playing = True
             self.frames_since_active = 0
@@ -118,25 +120,25 @@ class BatchTennisPipeline:
         self.input_dir = config.VIDEO_PATH
         self.output_base_dir = config.OUTPUT_DIR
 
-        # 获取目录下所有 mp4 文件并排序，确保处理顺序一致
+        # Get all mp4 files in the directory and sort them to ensure consistent processing order
         self.video_files = sorted([f for f in os.listdir(self.input_dir) if f.lower().endswith('.mp4')])
         if not self.video_files:
-            raise FileNotFoundError(f"在 {self.input_dir} 中未找到任何 mp4 文件！")
+            raise FileNotFoundError(f"No mp4 files found in {self.input_dir}!")
 
         self.court_detector = CourtDetector(scale=config.SCOUT_SCALE)
 
         torch.backends.cudnn.benchmark = True
 
-        # 全局进度状态
+        # Global progress status
         self.current_video_idx = 0
         self.current_scout_frame = 0
         self.current_task_count = 0
-        self.pending_queue_data = []  # 暂存断点时的队列数据
+        self.pending_queue_data = []  # Temporarily stores queue data during checkpointing
 
         self._load_checkpoint()
 
     def _load_checkpoint(self):
-        """ 加载本地存档，恢复到特定的视频和特定的帧位 """
+        """ Loads local checkpoint to restore to a specific video and specific frame position """
         if os.path.exists(config.CHECKPOINT_FILE):
             try:
                 with open(config.CHECKPOINT_FILE, "r", encoding="utf-8") as f:
@@ -147,20 +149,20 @@ class BatchTennisPipeline:
                 self.pending_queue_data = data.get("pending_queue", [])
 
                 if self.current_video_idx >= len(self.video_files):
-                    print("[*] 存档显示的视频已全部处理完毕，将从头开始。")
+                    print("[*] The videos shown in the checkpoint have all been processed, starting from scratch.")
                     self.current_video_idx = 0
                     self.current_scout_frame = 0
                     self.current_task_count = 0
                     self.pending_queue_data = []
                 else:
                     resume_video = self.video_files[self.current_video_idx]
-                    print(f"[*] 读取存档成功。准备继续处理: {resume_video}")
-                    print(f"[*] 进度 -> CPU 帧位: {self.current_scout_frame}, GPU 已完成: {self.current_task_count}")
+                    print(f"[*] Checkpoint loaded successfully. Preparing to resume processing: {resume_video}")
+                    print(f"[*] Progress -> CPU Frame: {self.current_scout_frame}, GPU Completed Tasks: {self.current_task_count}")
             except Exception:
-                print("[!] 存档文件损坏，将从头开始运行。")
+                print("[!] Checkpoint file corrupted, starting from scratch.")
 
     def _save_checkpoint(self):
-        """ 挂起时保存跨文件全局状态 """
+        """ Saves global state across files when suspended """
         pending = list(self.task_queue.queue)
         state = {
             "video_idx": self.current_video_idx,
@@ -170,10 +172,10 @@ class BatchTennisPipeline:
         }
         with open(config.CHECKPOINT_FILE, "w", encoding="utf-8") as f:
             json.dump(state, f, indent=4)
-        print(f"[*] 进度已导出至 {config.CHECKPOINT_FILE}")
+        print(f"[*] Progress exported to {config.CHECKPOINT_FILE}")
 
     def producer_scout_thread(self, video_path, total_frames, fps, width, height):
-        print(f"[CPU] 巡视器启动 -> {os.path.basename(video_path)}")
+        print(f"[CPU] Scout thread started -> {os.path.basename(video_path)}")
         cap = cv2.VideoCapture(video_path)
         cap.set(cv2.CAP_PROP_POS_FRAMES, self.current_scout_frame)
 
@@ -223,7 +225,7 @@ class BatchTennisPipeline:
                             }
                             self.task_queue.put(task)
                             print(
-                                f"[CPU] 回合入队 | 时长: {duration:.1f}s | 进度: {(frame_idx / total_frames) * 100:.1f}%")
+                                f"[CPU] Rally enqueued | Duration: {duration:.1f}s | Progress: {(frame_idx / total_frames) * 100:.1f}%")
 
                         current_far_rois.clear()
                         current_near_rois.clear()
@@ -235,22 +237,22 @@ class BatchTennisPipeline:
         self.scout_finished.set()
 
     def consumer_yolo_thread(self, video_path, video_output_dir, fps, width, height):
-        print("[GPU] 提取机启动")
+        print("[GPU] Extractor thread started")
         model = YOLO(config.MODEL_PATH)
         
-        # 智能设备硬件适配加速优化
+        # Intelligent device hardware adaptation acceleration optimization
         if torch.cuda.is_available():
             device = 'cuda:0'
         elif torch.backends.mps.is_available():
             device = 'mps'
         else:
             device = 'cpu'
-        print(f"[GPU] YOLO11 推理硬件自动绑定至: {device.upper()}")
+        print(f"[GPU] YOLO11 inference hardware automatically bound to: {device.upper()}")
         model.to(device)
         
         tracker = PoseTracker(model)
 
-        # 初始化新增的空间拉力检测模块
+        # Initialize the newly added spatial rally detection module
         rally_detector = SpatialRallyDetector(fps=fps, buffer_seconds=1.5, movement_threshold=3.0)
 
         cap = cv2.VideoCapture(video_path)
@@ -260,7 +262,7 @@ class BatchTennisPipeline:
         while True:
             if self.stop_event.is_set():
                 self.current_task_count = task_count
-                print("[GPU] 收到挂起指令，完成当前片段后安全退出")
+                print("[GPU] Suspension command received, exiting safely after completing current clip")
                 break
 
             try:
@@ -294,7 +296,7 @@ class BatchTennisPipeline:
             h_far = {'box': None, 'kpts': None, 'miss': 0}
             h_near = {'box': None, 'kpts': None, 'miss': 0}
 
-            print(f"[GPU] 正在标注: {clip_name}")
+            print(f"[GPU] Annotating: {clip_name}")
 
             while curr_frame <= rally['end']:
                 ret, frame = cap.read()
@@ -304,22 +306,22 @@ class BatchTennisPipeline:
                 ann_frame = frame.copy()
                 f_data = {"frame": curr_frame, "far_player": None, "near_player": None}
 
-                # 提取追踪当前帧的球员姿态及边框数据
+                # Extract and track the player pose and box data for the current frame
                 f_data["far_player"] = tracker.process_and_smooth(
                     frame[fy1:fy2, fx1:fx2], fx1, fy1, True, h_far, ann_frame)
 
                 f_data["near_player"] = tracker.process_and_smooth(
                     frame[ny1:ny2, nx1:nx2], nx1, ny1, False, h_near, ann_frame)
 
-                # 新增核心：调用解包加固的安全检测器
+                # Core feature: Call the secure detector reinforced with unpacking protection
                 in_play = rally_detector.update(f_data["far_player"], f_data["near_player"])
                 f_data["in_play"] = in_play
 
-                # 在可视化的视频流上渲染状态标志栏
+                # Render the status banner on the visualized video stream
                 status_text = "STATE: PLAYING" if in_play else "STATE: NOT PLAYING"
-                status_color = (0, 255, 0) if in_play else (0, 0, 255)  # 绿(打球) vs 红(未打球)
+                status_color = (0, 255, 0) if in_play else (0, 0, 255)  # Green (Playing) vs Red (Not Playing)
                 
-                # 在左上角画一个状态面板底框并渲染文字
+                # Draw a status panel background box in the top-left corner and render the text
                 cv2.rectangle(ann_frame, (30, 30), (450, 100), (15, 15, 15), -1)
                 cv2.putText(ann_frame, status_text, (50, 75), 
                             cv2.FONT_HERSHEY_SIMPLEX, 1.0, status_color, 3, cv2.LINE_AA)
@@ -337,12 +339,12 @@ class BatchTennisPipeline:
                 torch.cuda.empty_cache()
             self.current_task_count = task_count
             self.task_queue.task_done()
-            print(f"[GPU] 片段完成: {clip_name}")
+            print(f"[GPU] Clip completed: {clip_name}")
 
         cap.release()
 
     def process_single_video(self, video_path):
-        """ 处理单个视频的完整生命周期 """
+        """ Handles the complete lifecycle of a single video """
         temp_cap = cv2.VideoCapture(video_path)
         fps = temp_cap.get(cv2.CAP_PROP_FPS)
         width = int(temp_cap.get(cv2.CAP_PROP_FRAME_WIDTH))
@@ -354,11 +356,11 @@ class BatchTennisPipeline:
         video_output_dir = os.path.join(self.output_base_dir, video_name)
         os.makedirs(video_output_dir, exist_ok=True)
 
-        # 重置当前视频的队列与事件
+        # Reset the queue and events for the current video
         self.task_queue = queue.Queue()
         for item in self.pending_queue_data:
             self.task_queue.put(item)
-        self.pending_queue_data = []  # 装载后清空缓冲
+        self.pending_queue_data = []  # Clear buffer after loading
 
         self.scout_finished = threading.Event()
         self.stop_event = threading.Event()
@@ -371,14 +373,14 @@ class BatchTennisPipeline:
         scout_t.start()
         yolo_t.start()
 
-        # 监控 control.txt
+        # Monitor control.txt
         while scout_t.is_alive() or yolo_t.is_alive():
             if os.path.exists(config.CONTROL_FILE):
                 try:
                     with open(config.CONTROL_FILE, "r", encoding="utf-8") as f:
                         cmd = f.read().strip().lower()
                     if cmd == "save":
-                        print("\n[*] 接收到保存指令，正在挂起工作线程...")
+                        print("\n[*] Save command received, suspending worker threads...")
                         self.stop_event.set()
                         with open(config.CONTROL_FILE, "w", encoding="utf-8") as f:
                             f.write("saved")
@@ -401,22 +403,22 @@ class BatchTennisPipeline:
             video_path = os.path.join(self.input_dir, video_file)
 
             print(f"\n{'=' * 50}")
-            print(f"[*] 开始处理队列 ({idx + 1}/{len(self.video_files)}): {video_file}")
+            print(f"[*] Starting queue processing ({idx + 1}/{len(self.video_files)}): {video_file}")
             print(f"{'=' * 50}")
 
             is_stopped = self.process_single_video(video_path)
 
             if is_stopped:
                 self._save_checkpoint()
-                print(f"[*] 断点已成功保存。随时可以安全关闭程序。")
+                print(f"[*] Checkpoint saved successfully. Safe to close the application at any time.")
                 return
             else:
-                print(f"[*] 视频 {video_file} 处理完毕。")
+                print(f"[*] Video {video_file} processing completed.")
                 self.current_scout_frame = 0
                 self.current_task_count = 0
 
-        print(f"\n[!!!] 文件夹内所有视频批量处理完成 [!!!]")
-        print(f"总耗时: {(time.time() - s_time) / 60:.2f} 分钟。")
+        print(f"\n[!!!] Batch processing completed for all videos in the directory [!!!]")
+        print(f"Total time elapsed: {(time.time() - s_time) / 60:.2f} minutes.")
         if os.path.exists(config.CHECKPOINT_FILE):
             os.remove(config.CHECKPOINT_FILE)
 

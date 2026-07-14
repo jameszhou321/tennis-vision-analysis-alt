@@ -1,35 +1,35 @@
-"""yolo-train.py — YOLO 人员分类模型训练脚本
+"""yolo-train.py — YOLO Person Classification Model Training Script
 
-功能：基于 data/person_sorter/ 数据集，微调 YOLO 模型用于球员分类
+Function: Fine-tune the YOLO model for player classification based on the data/person_sorter/ dataset.
 """
 from ultralytics import YOLO
 
 
 def main():
-    # 加载预训练模型
+    # Load pre-trained model
     model = YOLO("yolo26x.pt")
 
-    # 启动极致优化训练
+    # Start highly optimized training
     results = model.train(
         data="data/dataset.yaml",
         epochs=150,
-        imgsz=640,  # 针对小目标，切勿随意缩小分辨率
-        batch=4,  # 根据你的显存大小调整 (例如 3090/4090 可以尝试 8 或 16)
+        imgsz=640,  # Tailored for small targets; do not reduce the resolution arbitrarily
+        batch=4,  # Adjust based on your VRAM size (e.g., try 8 or 16 on a 3090/4090)
         device=0,
 
-        # --- 提速与内存/显存优化核心参数 ---
-        cache=True,  # 【核心】将图片预载入内存，彻底消灭硬盘 I/O 等待
-        amp=True,  # 【核心】开启 FP16 混合精度，显存占用减半，速度翻倍
-        workers=8,  # 【核心】Dataloader 线程数，Windows 建议 4 或 8
-        # accumulate=4,     # 【备选】如果显存依然爆炸，解开此注释，配合 batch=2 使用
+        # --- Core Parameters for Speedup and Memory/VRAM Optimization ---
+        cache=True,  # [CORE] Pre-load images into RAM to completely eliminate disk I/O bottleneck
+        amp=True,  # [CORE] Enable FP16 automatic mixed precision: halves VRAM usage and doubles speed
+        workers=8,  # [CORE] Number of DataLoader threads; 4 or 8 is recommended for Windows
+        # accumulate=4,     # [ALTERNATIVE] If VRAM still overflows, uncomment this and use alongside batch=2
 
-        optimizer="MuSGD",  # YOLO26 新特性优化器
+        optimizer="MuSGD",  # New feature optimizer in YOLO26
         project="tennis_tracking",
         name="yolo26x_optimized_run",
 
-        # 其他实用参数
-        patience=30,  # 引入早停机制：如果 30 个 epoch 精度无提升则提前结束训练
-        save_period=10  # 每 10 个 epoch 备份一次权重，防止电脑意外死机
+        # Other practical parameters
+        patience=30,  # Early stopping mechanism: terminates training early if accuracy doesn't improve for 30 epochs
+        save_period=10  # Backup weights every 10 epochs to prevent data loss from unexpected crashes
     )
 
 

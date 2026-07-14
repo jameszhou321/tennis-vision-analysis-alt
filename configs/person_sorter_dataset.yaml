@@ -1,4 +1,4 @@
-# person_sorter_dataset.yaml — 自动生成，勿手动修改路径
+# person_sorter_dataset.yaml — Automatically generated, do not manually modify paths
 path: e:/共享/claude-test/项目标注与测试/data/person_sorter
 train: images/train
 val: images/val

@@ -1,6 +1,6 @@
-﻿# 组件对比：冻结骨干（unfreeze_backbone=false）
-# 只训练 Transformer 头部，骨干权重固定
-# 对比 main.yaml，观察微调骨干 vs 固定特征提取器的差异
+﻿# Component Comparison: Freeze Backbone (unfreeze_backbone=false)
+# Trains only the Transformer head while backbone weights remain fixed
+# Compared against main.yaml to observe the difference between fine-tuning the backbone vs using a fixed feature extractor
 
 data_root: "data/rallies_train"
 crops_root: "data/rallies_train"
@@ -18,7 +18,7 @@ use_pos_encoding: false
 visual_backbone: "yolo11"
 global_backbone_weights: "models/yolo/yolo11n.pt"
 backbone_weights: "models/yolo/yolo11n-pose.pt"
-unfreeze_backbone: false         # ← 变量：冻结骨干
+unfreeze_backbone: false         # ← Variable: Freeze backbone
 multi_scale_levels: [3, 4, 5]
 tokens_per_scale: 4
 visual_tokens: 16

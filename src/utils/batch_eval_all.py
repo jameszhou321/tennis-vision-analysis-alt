@@ -1,7 +1,8 @@
 """
-批量评估：单进程+数据共享，3模型一组共享数据。
-用法: cd 项目标注与测试 && .venv/Scripts/python src/utils/batch_eval_all.py
-输出: ../论文/batch_eval_results.csv
+batch_eval_all.py — Batch Evaluation Script: Single Process + Data Sharing (3 Models per Group)
+
+Usage: cd Project_Annotation_and_Testing && .venv/Scripts/python src/utils/batch_eval_all.py
+Output: ../Thesis/batch_eval_results.csv
 """
 import sys, os, csv, glob, gc
 import torch
@@ -18,7 +19,7 @@ from dataset import TennisActionDataset
 from model_main import MSTFormer
 from config import load_config
 
-RESULTS_FILE = os.path.join(_PROJECT_DIR, "论文", "batch_eval_results.csv")
+RESULTS_FILE = os.path.join(_PROJECT_DIR, "Thesis", "batch_eval_results.csv")
 
 GROUPS = [
     [("main", "main"), ("optimal", "optimal"), ("sf_main", "sf_main")],
@@ -30,20 +31,20 @@ GROUPS = [
 ]
 
 def try_load(name, yaml_sub):
-    """尝试加载模型，失败返回None"""
+    """Attempts to load a model weight checkpoint and configuration file. Returns None on failure."""
     pattern = os.path.join(_PROJECT_DIR, "models", "action", name, "*", "best.pth")
     cands = glob.glob(pattern)
     if not cands: return None, name
     latest = max(cands, key=os.path.getmtime)
     ts_dir = os.path.dirname(latest)
 
-    # 找配置文件
+    # Locate the configuration file
     cfg_path = None
     for fn in ["config.yaml", "config.json"]:
         fp = os.path.join(ts_dir, fn)
         if os.path.exists(fp): cfg_path = fp; break
     if not cfg_path:
-        # 回退
+        # Fallback to the alternative config file path
         alt = os.path.join(_PROJECT_DIR, "configs", yaml_sub + ".yaml")
         if os.path.exists(alt): cfg_path = alt
     if not cfg_path: return None, name
@@ -64,7 +65,7 @@ def try_load(name, yaml_sub):
         model.eval()
         return (model, raw_cfg, os.path.basename(ts_dir), name)
     except Exception as e:
-        print(f"  {name} 加载失败: {e}")
+        print(f"  {name} loading failed: {e}")
         return None, name
 
 def main():
@@ -72,7 +73,7 @@ def main():
     device = torch.device("cuda")
     data_root = os.path.join(_PROJECT_DIR, "data", "rallies_train")
 
-    # 数据切分
+    # Dataset splitting (Train/Test)
     import random, cv2
     random.seed(42)
     clips = []
@@ -87,15 +88,16 @@ def main():
         cap.release()
         if nf > 0: clips.append((cp, nf))
     random.shuffle(clips)
+    
     _, test_dirs = [], []
     cur = 0
     target = sum(n for _, n in clips) * 0.8
     for p, n in clips:
         if cur < target: cur += n
         else: test_dirs.append(p)
-    print(f"测试集: {len(test_dirs)} clips")
+    print(f"Test Set: {len(test_dirs)} clips")
 
-    # DataLoader（只创建一次）
+    # Single initialization of the shared DataLoader
     base_cfg = {"data_root": data_root, "seq_len": 120, "min_seq_len": 60,
                 "use_visual": True, "use_player_crops": True}
     ds = TennisActionDataset({**base_cfg, "num_classes": 5, "crops_root": data_root,
@@ -105,27 +107,27 @@ def main():
     results = []
     for gi, group in enumerate(GROUPS):
         print(f"\n{'='*60}")
-        print(f"  组 {gi+1}/{len(GROUPS)}: {[g[0] for g in group]}")
+        print(f"  Group {gi+1}/{len(GROUPS)}: {[g[0] for g in group]}")
         print(f"{'='*60}")
 
-        # 加载模型
+        # Loading models belonging to the current group
         loaded = []
         for name, yaml_sub in group:
             m = try_load(name, yaml_sub)
             if m[0] is not None:
                 loaded.append(m)
-                print(f"  {name}")
+                print(f"  [Loaded] {name}")
             else:
-                print(f"  {name} 跳过: {m[1] if len(m)>1 else 'no model'}")
+                print(f"  [Skipped] {name}: {m[1] if len(m)>1 else 'no model found'}")
 
         if not loaded:
             for name, _ in group: results.append([name, "FAILED"])
             continue
 
-        # 推理
+        # Running batch inference
         all_out = {m[3]: ([], []) for m in loaded}
         with torch.inference_mode():
-            for batch in tqdm(loader, desc=f"  组{gi+1}"):
+            for batch in tqdm(loader, desc=f"  Group {gi+1}"):
                 pose, packed, labels, _kf = batch
                 pose = pose.to(device, non_blocking=True)
                 packed = packed.to(device, non_blocking=True)
@@ -139,7 +141,7 @@ def main():
                     all_out[name][0].extend(preds[mask].cpu().numpy())
                     all_out[name][1].extend(labels[mask].cpu().numpy())
 
-        # 计算指标并保存
+        # Metrics calculation and persistence
         for model, cfg, ts, name in loaded:
             yt = np.array(all_out[name][1])
             yp = np.array(all_out[name][0])
@@ -153,12 +155,12 @@ def main():
             np.savetxt(os.path.join(out_dir, "cm_test.csv"), cm, delimiter=",", fmt="%d")
             print(f"  ▶ {name}: test_acc={acc*100:.2f}%")
 
-        # 释放
+        # Memory clean-up to minimize VRAM fragmentation between groups
         loaded.clear()
         torch.cuda.empty_cache()
         gc.collect()
 
-    # 写结果
+    # Writing final evaluation results to CSV
     with open(RESULTS_FILE, "w", newline="", encoding="utf-8") as f:
         w = csv.writer(f)
         w.writerow(["config", "test_acc"])
@@ -166,7 +168,7 @@ def main():
             w.writerow(r)
 
     print(f"\n{'='*50}")
-    print(f"  完成! 结果: {RESULTS_FILE}")
+    print(f"  Complete! File saved to: {RESULTS_FILE}")
     print(f"{'='*50}")
     for r in results:
         print(f"  {r[0]:<20} {r[1]}")

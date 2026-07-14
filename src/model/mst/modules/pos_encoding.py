@@ -1,4 +1,4 @@
-"""pos_encoding.py — 正弦位置编码"""
+"""pos_encoding.py — Sinusoidal Positional Encoding"""
 import torch
 import torch.nn as nn
 import math

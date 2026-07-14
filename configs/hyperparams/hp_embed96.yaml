@@ -1,5 +1,5 @@
-﻿# 超参实验：embed_dim=96（缩小嵌入维度）
-# 对比 main.yaml（embed_dim=128），观察容量缩减对性能的影响
+﻿# Hyperparameter Experiment: embed_dim=96 (Reduced embedding dimension)
+# Compared against main.yaml (embed_dim=128) to observe the impact of capacity reduction on performance
 
 data_root: "data/rallies_train"
 crops_root: "data/rallies_train"
@@ -24,7 +24,7 @@ visual_tokens: 16
 merge_visual_tokens: true
 parallel_backbones: false
 
-embed_dim: 96                    # ← 变量
+embed_dim: 96                    # ← Variable
 depth: 8
 num_heads: 4
 dropout: 0.3

@@ -1,10 +1,13 @@
-"""raw_extractor.py — 原始像素投影特征提取器"""
+"""raw_extractor.py — Raw Pixel Projection Feature Extractor"""
 import torch.nn as nn
 from .token_resampler import TokenResampler
 
 
 class RawProjectionExtractor(nn.Module):
-    """直接将原始帧像素 AdaptiveAvgPool 后线性投影，经 TokenResampler 输出固定 visual_tokens 个 token。"""
+    """Directly applies AdaptiveAvgPool to raw frame pixels, projects them linearly, 
+
+    and passes the result through a TokenResampler to output a fixed number of visual_tokens.
+    """
 
     def __init__(self, tokens_per_scale, embed_dim, visual_tokens=16):
         super().__init__()

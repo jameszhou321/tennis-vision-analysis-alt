@@ -1,5 +1,5 @@
-﻿# 组件对比：Focal Loss（与 main.yaml 相同，作为 loss 对比基准）
-# 对比 cmp_ce_loss.yaml，观察 Focal Loss vs CE 的差异
+﻿# Component Comparison: Focal Loss (Identical to main.yaml, serves as the loss baseline)
+# Compared against cmp_ce_loss.yaml to observe the difference between Focal Loss vs CE
 
 data_root: "data/rallies_train"
 crops_root: "data/rallies_train"
@@ -35,7 +35,7 @@ total_epochs: 40
 learning_rate: 1.0e-4
 weight_decay: 0.05
 warmup_epochs: 5
-loss: "focal"                    # ← 变量：Focal Loss
+loss: "focal"                    # ← Variable: Focal Loss
 focal_gamma: 2.0
 keyframe_loss_weight: 0.5
 

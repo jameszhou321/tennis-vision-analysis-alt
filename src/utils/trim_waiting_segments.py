@@ -1,11 +1,11 @@
 """
-修剪数据集中的等待段，减少类别不平衡。
-从 data/rallies_train/ 读取，处理后输出到 data/rallies_train_trimmed/。
+Trim waiting segments in the dataset to mitigate class imbalance.
+Reads data from data/rallies_train/, processes it, and outputs to data/rallies_train_trimmed/.
 
-三种方法（独立概率，可叠加，不修改原始数据）：
-  方法1 (75%)：末尾等待最多保留2s。连续等待时只裁最后一个
-  方法2 (70%)：两次发球间的等待段，发球1后留1.5s，发球2前留1s
-  方法3 (50%)：开头等待只保留最后2s
+Three methods (independent probabilities, stackable, leaves original data assets unaltered):
+  Method 1 (75%): Retain a maximum of 2s for trailing wait segments. Trims only the last item during consecutive waits.
+  Method 2 (70%): Wait segments between two serves: keep up to 1.5s after Serve 1, and up to 1.0s before Serve 2.
+  Method 3 (50%): Retain only the last 2s for leading wait segments.
 """
 
 import json
@@ -15,18 +15,18 @@ import os
 import sys
 from pathlib import Path
 
-# ─── 配置 ───────────────────────────────────────────
+# ─── Configuration ──────────────────────────────────────────────────────────
 SRC_ROOT = Path(__file__).resolve().parent.parent.parent / "data" / "rallies_train"
 DST_ROOT = Path(__file__).resolve().parent.parent.parent / "data" / "rallies_train_trimmed"
 SEED = 42
-PROB_M1 = 0.75   # 末尾等待 → 最多2s
-PROB_M2 = 0.70   # 两次发球间等待裁切
-PROB_M3 = 0.50   # 开头等待 → 最后2s
+PROB_M1 = 0.75   # Trailing wait -> max 2s
+PROB_M2 = 0.70   # Wait segments between serves trim
+PROB_M3 = 0.50   # Leading wait -> last 2s
 
 ACTION_WAIT = 0
 ACTION_SERVE = 3
 
-# ─── I/O ─────────────────────────────────────────────
+# ─── I/O Operations ─────────────────────────────────────────────────────────
 
 
 def load_annotations(rally_path):
@@ -43,11 +43,11 @@ def save_annotations(annotations, dst_path):
         json.dump(annotations, f, ensure_ascii=False, indent=2)
 
 
-# ─── 条件检查 ────────────────────────────────────────
+# ─── Condition Evaluation ───────────────────────────────────────────────────
 
 
 def count_trailing_wait(annots):
-    """统计末尾连续等待段的数量（=0 表示末尾不是等待）"""
+    """Count the number of consecutive trailing wait segments (=0 means trailing segment is not a wait)."""
     cnt = 0
     for a in reversed(annots):
         if a["action_id"] == ACTION_WAIT:
@@ -65,16 +65,16 @@ def has_leading_wait(annots):
     return bool(annots) and annots[0]["action_id"] == ACTION_WAIT
 
 
-# ─── 方法1：修剪末尾等待 ─────────────────────────────
+# ─── Method 1: Trim Trailing Wait ───────────────────────────────────────────
 
 
 def trim_trailing_wait(annots):
-    """末尾等待段最多保留2s。连续等待时只裁最后一个。"""
+    """Retain a maximum of 2s for trailing wait segments. Trims only the last item during consecutive waits."""
     consecutive = count_trailing_wait(annots)
     if consecutive == 0:
         return annots
 
-    # 只处理最后一个等待段
+    # Process only the last wait segment
     last = annots[-1]
     duration = last["end_time"] - last["start_time"]
     if duration > 2.0:
@@ -82,14 +82,14 @@ def trim_trailing_wait(annots):
     return annots
 
 
-# ─── 方法2：两次发球间的等待 ─────────────────────────
+# ─── Method 2: Wait Segments Between Serves ─────────────────────────────────
 
 
 def trim_between_serves(annots):
-    """两次发球间的等待段：
-    - 发球1结束后 1.5s 内的等待保留
-    - 发球2开始前 1s 内的等待保留
-    - 其他等待段全部移除
+    """Wait segments between two serves:
+    - Retain wait data within 1.5s after Serve 1 ends.
+    - Retain wait data within 1.0s before Serve 2 starts.
+    - Completely remove all other wait segments.
     """
     serve_indices = [i for i, a in enumerate(annots) if a["action_id"] == ACTION_SERVE]
     if len(serve_indices) < 2:
@@ -99,12 +99,12 @@ def trim_between_serves(annots):
     serve1_end = annots[idx1]["end_time"]
     serve2_start = annots[idx2]["start_time"]
 
-    keep_end = serve1_end + 1.5    # 发球1后保留到
-    keep_start = serve2_start - 1.0  # 发球2前从这开始保留
+    keep_end = serve1_end + 1.5    # Retain up to 1.5s after Serve 1
+    keep_start = serve2_start - 1.0  # Retain from 1.0s before Serve 2
 
-    # 分两阶段：
-    # 1) 收集所有需要做的事（记录，不动原列表）
-    # 2) 从后往前执行（避免索引偏移）
+    # Executed in two phases:
+    # 1) Collect all operations to perform (log changes, leave original list unchanged)
+    # 2) Execute processing backwards from back to front (to prevent array index shifting errors)
 
     actions = []  # (index_in_annots, 'remove') or (index, 'modify', new_start, new_end)
     new_segs_before_serve2 = []  # dicts to insert before serve2
@@ -117,16 +117,16 @@ def trim_between_serves(annots):
 
         ws, we = s["start_time"], s["end_time"]
 
-        # 与保留区域的重叠情况
-        in_keep1 = ws < keep_end    # 在发球1后1.5s区域内
-        in_keep2 = we > keep_start  # 在发球2前1s区域内
+        # Evaluate overlay bounds within designated retention zones
+        in_keep1 = ws < keep_end    # Within the 1.5s window after Serve 1
+        in_keep2 = we > keep_start  # Within the 1.0s window before Serve 2
 
         if not in_keep1 and not in_keep2:
             actions.append((i, "remove"))
 
         elif in_keep1 and in_keep2:
             if keep_end >= keep_start:
-                # 两个保留区重叠，取交集
+                # Retention zones overlap; extract intersection bounds
                 new_s = max(ws, keep_start)
                 new_e = min(we, keep_end)
                 if new_s < new_e:
@@ -134,13 +134,13 @@ def trim_between_serves(annots):
                 else:
                     actions.append((i, "remove"))
             else:
-                # 不重叠，拆成两段
-                # 前半段：[ws, keep_end]
+                # Non-overlapping; bifurcate data into two distinct segments
+                # First half segment: [ws, keep_end]
                 if keep_end > ws:
                     actions.append((i, "modify", ws, keep_end))
                 else:
                     actions.append((i, "remove"))
-                # 后半段：[keep_start, we]
+                # Second half segment: [keep_start, we]
                 if we > keep_start:
                     new_segs_before_serve2.append({
                         "start_time": round(keep_start, 3),
@@ -157,7 +157,7 @@ def trim_between_serves(annots):
             new_s = max(ws, keep_start)
             actions.append((i, "modify", new_s, we))
 
-    # 执行：从后往前
+    # Execute processing backwards from back to front
     actions.sort(key=lambda x: x[0], reverse=True)
     for act in actions:
         idx = act[0]
@@ -168,8 +168,8 @@ def trim_between_serves(annots):
             annots[idx]["start_time"] = round(new_s, 3)
             annots[idx]["end_time"] = round(new_e, 3)
 
-    # 插入拆分出的新段（在 serve2 之前）
-    # 找到当前 serve2 的位置
+    # Insert parsed new tracking segment pieces immediately before Serve 2
+    # Look up the current sequence position for Serve 2
     cur_serve_indices = [i for i, a in enumerate(annots) if a["action_id"] == ACTION_SERVE]
     if len(cur_serve_indices) >= 2:
         pos = cur_serve_indices[1]
@@ -180,11 +180,11 @@ def trim_between_serves(annots):
     return annots
 
 
-# ─── 方法3：修剪开头等待 ─────────────────────────────
+# ─── Method 3: Trim Leading Wait ────────────────────────────────────────────
 
 
 def trim_leading_wait(annots):
-    """开头等待段只保留最后2s"""
+    """Retain only the last 2s for leading wait segments."""
     if not annots or annots[0]["action_id"] != ACTION_WAIT:
         return annots
     first = annots[0]
@@ -194,11 +194,11 @@ def trim_leading_wait(annots):
     return annots
 
 
-# ─── 复制与处理 ──────────────────────────────────────
+# ─── Replicating and Processing ─────────────────────────────────────────────
 
 
 def copy_with_hardlinks(src, dst):
-    """用硬链接复制目录（节省磁盘空间），排除 annotations.json。"""
+    """Replicate directory layout using hardlinks to conserve storage, ignoring annotations.json."""
     if dst.exists():
         shutil.rmtree(dst)
 
@@ -210,42 +210,42 @@ def copy_with_hardlinks(src, dst):
 
 
 def process_rally(src_path, dst_path, rng):
-    """加载注解 → 按概率应用三种方法 → 保存修改后的注解。"""
+    """Load annotations -> selectively apply the 3 processing methods by probability -> export alterations."""
     raw_annots = load_annotations(src_path)
     if raw_annots is None:
         return []
 
-    annots = json.loads(json.dumps(raw_annots))  # 深拷贝
+    annots = json.loads(json.dumps(raw_annots))  # Deep copy allocation
     applied = []
 
-    # 方法1
+    # Method 1 Execution Block
     if count_trailing_wait(annots) > 0 and rng.random() < PROB_M1:
         annots = trim_trailing_wait(annots)
         applied.append("m1")
 
-    # 方法2
+    # Method 2 Execution Block
     if has_two_serves(annots) and rng.random() < PROB_M2:
         annots = trim_between_serves(annots)
         applied.append("m2")
 
-    # 方法3
+    # Method 3 Execution Block
     if has_leading_wait(annots) and rng.random() < PROB_M3:
         annots = trim_leading_wait(annots)
         applied.append("m3")
 
-    # 只要注解有变化就保存
+    # Export modifications to disk only if data metrics have shifted
     if applied:
         save_annotations(annots, dst_path)
 
     return applied
 
 
-# ─── 主流程 ──────────────────────────────────────────
+# ─── Main Pipeline Process ──────────────────────────────────────────────────
 
 
 def main():
     if not SRC_ROOT.exists():
-        print(f"错误：源目录不存在 {SRC_ROOT}")
+        print(f"Error: Source directory does not exist at {SRC_ROOT}")
         sys.exit(1)
 
     DST_ROOT.mkdir(parents=True, exist_ok=True)
@@ -254,14 +254,14 @@ def main():
     total = len(rally_dirs)
     rng = random.Random(SEED)
 
-    print(f"源目录: {SRC_ROOT}")
-    print(f"目标目录: {DST_ROOT}")
-    print(f"总片段数: {total}")
-    print(f"方法1(末尾等待→2s): P={PROB_M1*100:.0f}%")
-    print(f"方法2(发球间等待):  P={PROB_M2*100:.0f}%")
-    print(f"方法3(开头等待→2s): P={PROB_M3*100:.0f}%")
-    print(f"随机种子: {SEED}")
-    print(f"数据文件: 硬链接（不占用额外空间）")
+    print(f"Source Root Path: {SRC_ROOT}")
+    print(f"Destination Root Path: {DST_ROOT}")
+    print(f"Total Segment Assets: {total}")
+    print(f"Method 1 (Trailing Wait -> 2s): P={PROB_M1*100:.0f}%")
+    print(f"Method 2 (Wait Between Serves):  P={PROB_M2*100:.0f}%")
+    print(f"Method 3 (Leading Wait -> 2s):  P={PROB_M3*100:.0f}%")
+    print(f"Randomization Seed: {SEED}")
+    print(f"File System Protocol: OS Hardlinks (Zero extra space allocated)")
     print()
 
     stats = {"m1": 0, "m2": 0, "m3": 0, "any": 0, "skipped_no_ann": 0}
@@ -273,36 +273,36 @@ def main():
 
         ann_path = src / "annotations.json"
         if not ann_path.exists():
-            print(f"{indent}跳过（无 annotations.json）")
+            print(f"{indent}Skipped (annotations.json missing from directory)")
             stats["skipped_no_ann"] += 1
             continue
 
-        # 硬链接复制数据文件
+        # Replicate directory components using OS Hardlinks
         copy_with_hardlinks(src, dst)
 
-        # 按概率处理注解
+        # Parse annotations structure array based on running probabilities
         local_rng = random.Random(SEED + i)
         applied = process_rally(src, dst, local_rng)
 
         if applied:
-            print(f"{indent}已处理: {' + '.join(applied)}")
+            print(f"{indent}Processed: {' + '.join(applied)}")
             stats["any"] += 1
             for m in applied:
                 stats[m] += 1
         else:
-            print(f"{indent}未命中（随机未抽中或不满足条件）")
+            print(f"{indent}No Modification Hits (Random skip or conditions unmet)")
 
     print()
     print("=" * 50)
-    print("处理统计:")
-    print(f"  总片段:             {total}")
-    print(f"  有注解:             {total - stats['skipped_no_ann']}")
-    print(f"  已修改（至少1种方法）: {stats['any']}")
-    print(f"  方法1(末尾等待→2s):  {stats['m1']}")
-    print(f"  方法2(发球间等待):   {stats['m2']}")
-    print(f"  方法3(开头等待→2s):  {stats['m3']}")
-    print(f"  跳过(无注解):        {stats['skipped_no_ann']}")
-    print(f"  输出目录:           {DST_ROOT}")
+    print("Processing Statistics Summary:")
+    print(f"  Total Clips:               {total}")
+    print(f"  Valid Annotated Clips:     {total - stats['skipped_no_ann']}")
+    print(f"  Modified (At least 1 method): {stats['any']}")
+    print(f"  Method 1 (Trailing Wait -> 2s):  {stats['m1']}")
+    print(f"  Method 2 (Wait Between Serves):   {stats['m2']}")
+    print(f"  Method 3 (Leading Wait -> 2s):  {stats['m3']}")
+    print(f"  Skipped Assets (No Metadata):     {stats['skipped_no_ann']}")
+    print(f"  Export Output Directory:    {DST_ROOT}")
     print("=" * 50)
 
 

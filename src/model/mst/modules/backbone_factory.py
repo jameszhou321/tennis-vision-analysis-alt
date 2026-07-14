@@ -1,4 +1,4 @@
-"""backbone_factory.py — 视觉骨干工厂（按配置构建 YOLO11/ResNet/ViT/Raw）"""
+"""backbone_factory.py — Visual backbone factory (Builds YOLO11/ResNet/ViT/Raw per config specifications)"""
 import torch.nn as nn
 from .yolo_extractor import Yolo11BackboneExtractor
 from .resnet_extractor import ResNet18BackboneExtractor
@@ -8,7 +8,7 @@ from .token_resampler import TokenResampler
 
 
 class ViTPatchExtractorWithResampler(nn.Module):
-    """ViTPatchExtractor + TokenResampler：保留细粒度 patch 特征，压缩到固定 num_out 个 token。"""
+    """ViTPatchExtractor + TokenResampler: Preserves fine-grained patch features while compressing down to a fixed num_out token ceiling."""
 
     def __init__(self, patch_grid, embed_dim, num_out=16):
         super().__init__()
@@ -25,6 +25,7 @@ def build_visual_extractor(cfg, shared_backbone=None, use_global_weights=False):
     k = cfg["tokens_per_scale"]
     d = cfg["embed_dim"]
     vt = cfg.get("visual_tokens", 16)
+    
     if backbone == "yolo11":
         weights = (cfg.get("global_backbone_weights") or cfg["backbone_weights"]) \
                   if use_global_weights else cfg["backbone_weights"]
@@ -46,4 +47,4 @@ def build_visual_extractor(cfg, shared_backbone=None, use_global_weights=False):
             num_out=vt,
         )
     else:
-        raise ValueError(f"未知 visual_backbone: {backbone}")
+        raise ValueError(f"Unknown visual_backbone target framework: {backbone}")

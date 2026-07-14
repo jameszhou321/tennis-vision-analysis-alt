@@ -1,7 +1,7 @@
-"""model_main.py — MSTFormer 模型定义（双头：动作分类 + 关键帧检测）"""
+"""model_main.py — MSTFormer Model Definition (Dual-Head: Action Classification + Keyframe Detection)"""
 import sys
 import os
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))  # 确保 mst/ 在路径中
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))  # Ensure mst/ is in the system path
 
 import torch
 import torch.nn as nn
@@ -12,13 +12,13 @@ from modules.pos_encoding import SinusoidalPositionalEncoding
 from modules.action_head import ActionClassificationHead, KeyframeDetectionHead
 from modules.token_resampler import TokenResampler
 
-# ImageNet 归一化常量，在 GPU 端做（避免 CPU 端 float32 传输）
+# ImageNet normalization constants performed on the GPU side (avoids float32 PCIe bandwidth overhead from CPU)
 _MEAN = torch.tensor([0.485, 0.456, 0.406]).view(1, 3, 1, 1)
 _STD  = torch.tensor([0.229, 0.224, 0.225]).view(1, 3, 1, 1)
 
 
 def _unpack_and_normalize(packed, device):
-    """packed: uint8 [N, 3, 320, 960] → 三路 float32 各 [N, 3, 320, 320]，GPU 端归一化"""
+    """packed: uint8 [N, 3, 320, 960] → 3-way float32 each [N, 3, 320, 320], normalized on GPU"""
     mean = _MEAN.to(device)
     std  = _STD.to(device)
     x = packed.float().div_(255.0)
@@ -49,12 +49,12 @@ class MSTFormer(nn.Module):
         if self.use_visual:
             self.backbone_global = build_visual_extractor(cfg, use_global_weights=True)
             if self.use_player_crops:
-                # share_yolo_backbone 开启时 p1/p2 复用全局骨干权重，节省约 5.7M 参数
+                # When share_yolo_backbone is active, p1/p2 reuse the global backbone weights, saving ~5.7M parameters
                 _shared = self.backbone_global.backbone if self.share_yolo_backbone else None
                 self.backbone_p1 = build_visual_extractor(cfg, shared_backbone=_shared)
                 self.backbone_p2 = build_visual_extractor(cfg, shared_backbone=_shared)
 
-        # 动态探测每个视觉流实际输出的 token 数
+        # Dynamically probe the actual number of output tokens from each visual stream
         if self.use_visual:
             import torch as _torch
             _dummy = _torch.zeros(1, 3, 320, 320)
@@ -65,12 +65,12 @@ class MSTFormer(nn.Module):
                 self.backbone_global.train()
             vis_streams = 3 if self.use_player_crops else 1
             if self.merge_visual_tokens:
-                # 三路 cat 后过共享 resampler，压缩到 visual_tokens 个
+                # Concatenate 3 streams and pass through a shared resampler to compress down to `visual_tokens`
                 visual_tokens = cfg.get("visual_tokens", 16)
                 self.shared_resampler = TokenResampler(d, num_out=visual_tokens)
                 self.tokens_per_frame = 1 + visual_tokens
             else:
-                # 每路独立输出 _k 个 token
+                # Each stream independently outputs `_k` tokens
                 self.tokens_per_frame = 1 + vis_streams * _k
         else:
             self.tokens_per_frame = 1
@@ -86,7 +86,7 @@ class MSTFormer(nn.Module):
                 dropout=cfg.get("dropout", 0.1),
                 batch_first=True,
                 activation="gelu",
-                norm_first=True,  # pre-norm，Flash Attention 快速路径的前提条件
+                norm_first=True,  # pre-norm, a prerequisite for Flash Attention fast path
             )
             for _ in range(cfg["depth"])
         ])
@@ -112,7 +112,7 @@ class MSTFormer(nn.Module):
         parts = [phys]
 
         if self.use_visual:
-            # GPU 端解包：[B, T, 3, 320, 960] → 三路 [B, T, 3, 320, 320]
+            # GPU-side unpacking: [B, T, 3, 320, 960] → 3-way [B, T, 3, 320, 320]
             flat_packed = packed_frames.view(B * T, 3, 320, 960)
             global_f, p1_f, p2_f = _unpack_and_normalize(flat_packed, pose_data.device)
             global_f = global_f.view(B, T, 3, 320, 320)
@@ -122,7 +122,7 @@ class MSTFormer(nn.Module):
                 p1_f = p1_f.view(B, T, 3, 320, 320)
                 p2_f = p2_f.view(B, T, 3, 320, 320)
                 if self.parallel_backbones:
-                    # 三路各用独立 CUDA stream，提交后同步
+                    # Run 3 streams in independent CUDA streams, then synchronize after submission
                     s1 = torch.cuda.Stream()
                     s2 = torch.cuda.Stream()
                     with torch.cuda.stream(s1):
@@ -136,7 +136,7 @@ class MSTFormer(nn.Module):
                     vis_parts.append(self._run_visual(self.backbone_p2, p2_f, B, T))
 
             if self.merge_visual_tokens:
-                # 三路 cat → (B*T, total_k, D) → shared_resampler → (B, T, visual_tokens, D)
+                # 3-way cat → (B*T, total_k, D) → shared_resampler → (B, T, visual_tokens, D)
                 merged = torch.cat(vis_parts, dim=2).view(B * T, -1, d)
                 merged = self.shared_resampler(merged).view(B, T, -1, d)
                 parts.append(merged)

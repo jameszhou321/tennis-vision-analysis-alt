@@ -1,6 +1,6 @@
 """
-test_person_detector.py — 球员检测模型全量测试
-功能：在所有训练和测试图片上运行推理，生成准确率报告和可视化结果
+test_person_detector.py — Full-scale Evaluation for Player Detection Model
+Function: Runs inference across all training and validation images to generate accuracy reports and verification summaries.
 """
 import os
 import json
@@ -11,9 +11,9 @@ import cv2
 import numpy as np
 from collections import defaultdict
 
-# ── 路径配置 ──────────────────────────────────────────────────────────
+# ── Path Configurations ───────────────────────────────────────────────
 CURRENT_DIR = Path(__file__).parent
-PROJECT_DIR = CURRENT_DIR.parent  # 项目标注与测试/
+PROJECT_DIR = CURRENT_DIR.parent  # Project_Annotation_and_Testing/
 MODEL_PATH = PROJECT_DIR / "runs" / "person_training" / "hard_neg_finetune_v12" / "weights" / "best.pt"
 DATA_DIR = PROJECT_DIR / "data" / "person_sorter" / "images"
 LABELS_DIR = PROJECT_DIR / "data" / "person_sorter" / "labels"
@@ -22,22 +22,22 @@ RESULTS_DIR.mkdir(parents=True, exist_ok=True)
 
 
 def get_short_path(path_str):
-    """Windows 中文路径转短路径"""
+    """Converts long Windows Chinese paths to short DOS paths to prevent parsing issues."""
     try:
         buf = ctypes.create_unicode_buffer(260)
-        if not hasattr(ctypes, "windll"):  # 非 Windows 直接用原路径
+        if not hasattr(ctypes, "windll"):  # Return the original path directly if non-Windows
             return path_str
         ctypes.windll.kernel32.GetShortPathNameW(path_str, buf, 260)
         return buf.value
     except:
         return path_str
 
-# 类别映射
+# Class ID Mappings
 CLASS_NAMES = {0: "player_near", 1: "player_far"}
 
 
 def load_labels(img_path, split):
-    """从 .txt 标签文件读取 GT（YOLO 格式）"""
+    """Reads Ground Truth (GT) from .txt label files in YOLO format."""
     label_path = LABELS_DIR / split / img_path.name.replace(".jpg", ".txt")
     if not label_path.exists():
         return []
@@ -57,7 +57,7 @@ def load_labels(img_path, split):
 
 
 def iou(box1, box2):
-    """计算两个 YOLO 格式 bbox 的 IoU"""
+    """Calculates Intersection over Union (IoU) for two YOLO-formatted bounding boxes."""
     def yolo_to_xyxy(x_c, y_c, w, h):
         x1 = x_c - w / 2
         y1 = y_c - h / 2
@@ -85,7 +85,7 @@ def iou(box1, box2):
 
 
 def test_dataset(split="all"):
-    """测试数据集"""
+    """Evaluates the dataset across specified data splits."""
     if split == "all":
         img_dirs = [DATA_DIR / "train", DATA_DIR / "val"]
     elif split == "train":
@@ -93,12 +93,12 @@ def test_dataset(split="all"):
     else:
         img_dirs = [DATA_DIR / "val"]
 
-    # 加载模型
-    print(f"加载模型: {MODEL_PATH}")
+    # Load Model
+    print(f"Loading model from: {MODEL_PATH}")
     model_short = get_short_path(str(MODEL_PATH))
     model = YOLO(model_short)
 
-    # 收集所有图片
+    # Collect all images matching criteria
     all_imgs = []
     for img_dir in img_dirs:
         if img_dir.exists():
@@ -106,9 +106,9 @@ def test_dataset(split="all"):
                 if f.endswith(".jpg"):
                     all_imgs.append(img_dir / f)
 
-    print(f"测试集大小: {len(all_imgs)} 张图片")
+    print(f"Dataset Evaluation Scale: {len(all_imgs)} images found.")
 
-    # 统计指标
+    # Statistical Evaluation Indicators
     stats = {
         "total": len(all_imgs),
         "tp": 0,
@@ -118,18 +118,18 @@ def test_dataset(split="all"):
         "per_image": []
     }
 
-    # 逐图推理
+    # Frame-by-frame Inference Loops
     for idx, img_path in enumerate(all_imgs):
         if (idx + 1) % 100 == 0:
-            print(f"  进度: {idx + 1}/{len(all_imgs)}")
+            print(f"  Progress: {idx + 1}/{len(all_imgs)}")
 
-        # 确定 split
+        # Determine structural data split context
         split = "train" if "train" in str(img_path) else "val"
 
-        # 读取 GT
+        # Load Ground Truth Metrics
         gt_labels = load_labels(img_path, split)
 
-        # 推理
+        # Execute Model Prediction
         img_short = get_short_path(str(img_path))
         results = model.predict(source=img_short, conf=0.5, verbose=False)
         pred_boxes = []
@@ -145,7 +145,7 @@ def test_dataset(split="all"):
                     "bbox": (x_c, y_c, w, h)
                 })
 
-        # 匹配 GT 和预测（贪心匹配）
+        # Bounding Box Greedy Matching System (GT <-> Predictions)
         matched_gt = set()
         matched_pred = set()
 
@@ -171,13 +171,13 @@ def test_dataset(split="all"):
                 stats["fp"] += 1
                 stats["class_stats"][pred["class"]]["fp"] += 1
 
-        # FN
+        # Calculate False Negatives (FN)
         for gt_idx in range(len(gt_labels)):
             if gt_idx not in matched_gt:
                 stats["fn"] += 1
                 stats["class_stats"][gt_labels[gt_idx]["class"]]["fn"] += 1
 
-        # 记录单张图片结果
+        # Record standalone isolated frame metadata metrics
         stats["per_image"].append({
             "image": str(img_path.relative_to(PROJECT_DIR)),
             "gt_count": len(gt_labels),
@@ -187,12 +187,12 @@ def test_dataset(split="all"):
             "fn": len(gt_labels) - len(matched_gt)
         })
 
-    # 计算指标
+    # Metric Evaluations
     precision = stats["tp"] / (stats["tp"] + stats["fp"]) if (stats["tp"] + stats["fp"]) > 0 else 0
     recall = stats["tp"] / (stats["tp"] + stats["fn"]) if (stats["tp"] + stats["fn"]) > 0 else 0
     f1 = 2 * precision * recall / (precision + recall) if (precision + recall) > 0 else 0
 
-    # 输出报告
+    # Build Verification Report Object
     report = {
         "split": split,
         "total_images": stats["total"],
@@ -224,34 +224,34 @@ def test_dataset(split="all"):
 
 
 if __name__ == "__main__":
-    print("开始测试 person 检测模型\n")
+    print("Beginning Person Detection Model Evaluation Pipeline...\n")
 
-    # 测试全量数据
+    # Run comprehensive evaluations on all available dataset sources
     report, per_image = test_dataset("all")
 
-    # 保存报告
+    # Output structural evaluation data configurations
     report_path = RESULTS_DIR / "test_report.json"
     with open(report_path, "w", encoding="utf-8") as f:
         json.dump(report, f, indent=2, ensure_ascii=False)
 
-    # 保存逐图结果
+    # Save tracking history configuration files per single frame analysis
     per_image_path = RESULTS_DIR / "per_image_results.json"
     with open(per_image_path, "w", encoding="utf-8") as f:
         json.dump(per_image, f, indent=2, ensure_ascii=False)
 
-    # 打印摘要
+    # Display execution result summary logs
     print("\n" + "="*60)
-    print("测试结果摘要")
+    print("EVALUATION RESULT SUMMARY")
     print("="*60)
-    print(f"总图片数: {report['total_images']}")
-    print(f"TP: {report['total_tp']}, FP: {report['total_fp']}, FN: {report['total_fn']}")
-    print(f"Precision: {report['precision']:.4f}")
-    print(f"Recall: {report['recall']:.4f}")
-    print(f"F1-Score: {report['f1']:.4f}")
-    print("\n按类别:")
+    print(f"Total Images Evaluated: {report['total_images']}")
+    print(f"TP: {report['total_tp']} | FP: {report['total_fp']} | FN: {report['total_fn']}")
+    print(f"Global Precision: {report['precision']:.4f}")
+    print(f"Global Recall   : {report['recall']:.4f}")
+    print(f"Global F1-Score : {report['f1']:.4f}")
+    print("\nMetrics Categorized by Sub-classes:")
     for cls_name, metrics in report["class_metrics"].items():
         print(f"  {cls_name}:")
         print(f"    P={metrics['precision']:.4f}, R={metrics['recall']:.4f}, F1={metrics['f1']:.4f}")
 
-    print(f"\n报告已保存到: {report_path}")
-    print(f"逐图结果已保存到: {per_image_path}")
+    print(f"\nEvaluation data profile exported to: {report_path}")
+    print(f"Individual frame analytical breakdown saved to: {per_image_path}")

@@ -1,4 +1,4 @@
-"""seq_len_sweep.py — 序列长度扫描：固定权重，评估不同 seq_len 下的准确率"""
+"""seq_len_sweep.py — Sequence Length Sweep: Fixed weights, evaluate accuracy under different seq_len configurations."""
 import os
 import sys
 import csv
@@ -70,7 +70,7 @@ def evaluate(model, loader, device, keyframe_only):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="序列长度扫描")
+    parser = argparse.ArgumentParser(description="Sequence Length Sweep")
     parser.add_argument("--config", required=True)
     parser.add_argument("--weights", required=True)
     parser.add_argument("--seq_lens", nargs="+", type=int, default=[30, 60, 90, 120, 150, 180])
@@ -82,14 +82,14 @@ def main():
 
     _, test_dirs = split_dataset(cfg["data_root"], cfg.get("train_ratio", 0.8))
     if not test_dirs:
-        print("测试集为空，请检查 data_root")
+        print("Test split dataset is empty, please check data_root targets")
         return
 
     model = MSTFormer(cfg).to(device)
     state = torch.load(args.weights, map_location=device)
     model.load_state_dict(state)
 
-    ACTION_NAMES = ["待机", "正手", "反手", "发球", "移动"]
+    ACTION_NAMES = ["Idle", "Forehand", "Backhand", "Serve", "Movement"]
     keyframe_only = cfg.get("keyframe_only", False)
 
     rows = []
@@ -113,7 +113,7 @@ def main():
 
         print(f"{seq_len:>8}  {acc*100:>6.2f}%  {prec*100:>6.2f}%  {rec*100:>6.2f}%  {f1*100:>6.2f}%")
 
-    # 保存 CSV
+    # Save CSV reports
     os.makedirs(os.path.join(_PROJECT_DIR, "runs"), exist_ok=True)
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
     cfg_stem = os.path.splitext(os.path.basename(args.config))[0]
@@ -122,7 +122,7 @@ def main():
         writer = csv.DictWriter(f, fieldnames=rows[0].keys())
         writer.writeheader()
         writer.writerows(rows)
-    print(f"\n结果已保存：{csv_path}")
+    print(f"\nMetrics metrics saved successfully: {csv_path}")
 
     if args.plot:
         try:
@@ -133,20 +133,20 @@ def main():
             accs = [r["accuracy"] * 100 for r in rows]
             f1s = [r["kf_f1"] * 100 for r in rows]
             fig, ax1 = plt.subplots(figsize=(8, 4))
-            ax1.plot(seq_lens, accs, "o-", color="#4CAF50", label="动作准确率 (%)")
-            ax1.set_xlabel("序列长度（帧）")
-            ax1.set_ylabel("准确率 (%)", color="#4CAF50")
+            ax1.plot(seq_lens, accs, "o-", color="#4CAF50", label="Action Accuracy (%)")
+            ax1.set_xlabel("Sequence Length (Frames)")
+            ax1.set_ylabel("Accuracy (%)", color="#4CAF50")
             ax2 = ax1.twinx()
-            ax2.plot(seq_lens, f1s, "s--", color="#FF9800", label="关键帧 F1 (%)")
-            ax2.set_ylabel("关键帧 F1 (%)", color="#FF9800")
+            ax2.plot(seq_lens, f1s, "s--", color="#FF9800", label="Keyframe F1 (%)")
+            ax2.set_ylabel("Keyframe F1 (%)", color="#FF9800")
             fig.legend(loc="upper right", bbox_to_anchor=(0.88, 0.88))
-            plt.title("序列长度 vs 准确率")
+            plt.title("Sequence Length vs Accuracy Performance")
             plt.tight_layout()
             plot_path = csv_path.replace(".csv", ".png")
             plt.savefig(plot_path, dpi=150)
-            print(f"折线图已保存：{plot_path}")
+            print(f"Data plot chart saved successfully: {plot_path}")
         except ImportError:
-            print("matplotlib 未安装，跳过绘图")
+            print("matplotlib missing from runtime landscape, skipping plot visualization cycles")
 
 
 class _nullctx:

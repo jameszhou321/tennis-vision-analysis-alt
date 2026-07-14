@@ -1,5 +1,5 @@
-# ===== 大文件 / 数据集（不纳入版本控制）=====
-# 原始比赛视频、字幕
+# ===== Large Files / Datasets (Excluded from Version Control) =====
+# Original competition videos, subtitles
 videos/
 *.mp4
 *.avi
@@ -7,18 +7,18 @@ videos/
 *.ass
 *.srt
 
-# 数据集（标注回合、球场/人员训练数据等）
+# Datasets (Annotated rounds, court/personnel training data, etc.)
 data/
 *.zip
 
-# 模型权重
+# Model weights
 models/
 *.pt
 *.pth
 *.onnx
 *.engine
 
-# 训练运行记录、日志、结果产出
+# Training run records, logs, outputs, results
 runs/
 logs/
 results/
@@ -33,19 +33,19 @@ __pycache__/
 build/
 dist/
 
-# 虚拟环境
+# Virtual environments
 .venv/
 venv/
 env/
 
-# ===== 工具 / 标注产物 =====
+# ===== Tools / Annotation Artifacts =====
 _progress.json
 last_session.json
 annotations.json
 pose_data.json
 tracking_data.json
 
-# ===== 编辑器 / 系统 =====
+# ===== IDEs / System Files =====
 .vscode/
 .idea/
 .DS_Store

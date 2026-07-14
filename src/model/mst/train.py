@@ -1,6 +1,6 @@
-"""train.py — MSTFormer v2 训练脚本
+"""train.py — MSTFormer v2 Training Script
 
-用法: python train.py [--config configs/main.yaml]
+Usage: python train.py [--config configs/main.yaml]
 """
 import os
 os.environ.setdefault("PYTORCH_ALLOC_CONF", "expandable_segments:True")
@@ -56,13 +56,13 @@ def split_dataset(data_root, test_root=None, train_ratio=0.8, seed=42):
         else:
             test_dirs.append(c["path"])
 
-    # 测试集使用完整数据集（未经修剪）——重映射路径
+    # Test set uses the full dataset (untrimmed) — remap paths
     if test_root is not None:
         test_dirs = [os.path.join(test_root, os.path.relpath(d, data_root))
                      for d in test_dirs]
 
-    print(f"训练集: {len(train_dirs)} 个视频（data_root: {data_root}）")
-    print(f"  测试集: {len(test_dirs)} 个视频（data_root: {test_root or data_root}）")
+    print(f"Train Set: {len(train_dirs)} videos (data_root: {data_root})")
+    print(f"  Test Set: {len(test_dirs)} videos (data_root: {test_root or data_root})")
     return train_dirs, test_dirs
 
 
@@ -95,11 +95,11 @@ def train_model(cfg):
     if "_smoke_clip" in cfg:
         one = cfg["_smoke_clip"]
         train_dirs = test_dirs = [one]
-        # smoke 模式降低显存压力，保留虚拟批大小语义
+        # smoke mode reduces VRAM pressure while preserving virtual batch size semantics
         cfg["batch_size"] = 1
         cfg["seq_len"] = 60
         cfg["num_workers"] = 0
-        cfg["accumulation_steps"] = cfg["virtual_batch_size"]  # batch=1 时每步都累积
+        cfg["accumulation_steps"] = cfg["virtual_batch_size"]  # Accumulate every step when batch=1
     else:
         train_dirs, test_dirs = split_dataset(cfg["data_root"],
                                                test_root=cfg.get("test_data_root"),
@@ -114,16 +114,16 @@ def train_model(cfg):
         num_workers=nw,
         pin_memory=cfg["pin_memory"],
     )
-    # persistent_workers=True 会导致 worker 持有旧 chunks 副本，reshuffle 后主进程
-    # len() 可能超出 worker 的 chunks 范围，引发 IndexError
+    # persistent_workers=True causes worker to hold an old copy of chunks; after reshuffle, the main process
+    # len() might exceed the worker's chunk range, triggering an IndexError.
     train_loader = DataLoader(train_ds, shuffle=True, drop_last=False,
                               persistent_workers=False, **common_kwargs)
-    # 启用图像增强时，用异步线程池包装 DataLoader，不阻塞 DataLoader worker
+    # When image augmentation is enabled, wrap the DataLoader in an async thread pool to avoid blocking the DataLoader workers
     if cfg.get("image_augment", False):
         n_threads = max(4, cfg.get("num_workers", 2) * 2)
         n_prefetch = max(3, cfg.get("num_workers", 2) + 1)
         train_loader = AugmentBuffer(train_loader, num_threads=n_threads, prefetch=n_prefetch)
-        print(f"  异步增强: {n_threads} threads, prefetch={n_prefetch}")
+        print(f"  Async Augmentation: {n_threads} threads, prefetch={n_prefetch}")
     test_loader = DataLoader(test_ds, shuffle=False,
                              persistent_workers=nw > 0, **common_kwargs)
 
@@ -157,12 +157,12 @@ def train_model(cfg):
     final_path = os.path.join(run_dir, "final.pth")
     log_path   = os.path.join(run_dir, "train_log.csv")
 
-    # 保存配置快照
+    # Save configuration snapshot
     yaml_src = cfg.get("_yaml_path")
     if yaml_src and os.path.exists(yaml_src):
         shutil.copy2(yaml_src, os.path.join(run_dir, "config.yaml"))
 
-    # 初始化 CSV 日志
+    # Initialize CSV log
     _log_fields = [
         "epoch", "lr", "train_loss", "train_acc",
         "test_acc", "kf_precision", "kf_recall", "kf_f1",
@@ -180,7 +180,7 @@ def train_model(cfg):
     def _async_save(state_dict, path):
         torch.save(state_dict, path)
 
-    print(f"开始训练，共 {total_epochs} 轮，Warmup {warmup} 轮")
+    print(f"Starting training for {total_epochs} epochs, Warmup: {warmup} epochs")
     print("=" * 75)
 
     for epoch in range(total_epochs):
@@ -188,7 +188,7 @@ def train_model(cfg):
         model.train()
         total_loss = correct = total = 0
 
-        pbar = tqdm(train_loader, desc=f"Epoch [{epoch+1}/{total_epochs}] 训练")
+        pbar = tqdm(train_loader, desc=f"Epoch [{epoch+1}/{total_epochs}] Training")
         for i, (pose, packed, labels, kf_labels) in enumerate(pbar):
             pose      = pose.to(device, non_blocking=True)
             packed    = packed.to(device, non_blocking=True)
@@ -224,7 +224,7 @@ def train_model(cfg):
         train_acc = correct / total if total > 0 else 0
         avg_loss = total_loss / len(train_loader)
 
-        # 评估
+        # Evaluation
         torch.cuda.empty_cache()
         model.eval()
         t_correct = t_total = 0
@@ -266,14 +266,14 @@ def train_model(cfg):
         print(f"   Loss: {avg_loss:.4f}", end="")
         if not keyframe_only:
             train_acc = correct / total if total > 0 else 0
-            print(f" | 训练Acc: {train_acc*100:.2f}% | 测试Acc: {test_acc*100:.2f}%")
-            print(f"   真实: 待机={ld[0]} 正手={ld[1]} 反手={ld[2]} 发球={ld[3]} 移动={ld[4]}")
-            print(f"   预测: 待机={pd[0]} 正手={pd[1]} 反手={pd[2]} 发球={pd[3]} 移动={pd[4]}")
+            print(f" | Train Acc: {train_acc*100:.2f}% | Test Acc: {test_acc*100:.2f}%")
+            print(f"   GT:   Idle={ld[0]} Forehand={ld[1]} Backhand={ld[2]} Serve={ld[3]} Move={ld[4]}")
+            print(f"   Pred: Idle={pd[0]} Forehand={pd[1]} Backhand={pd[2]} Serve={pd[3]} Move={pd[4]}")
         else:
             print()
-        print(f"   关键帧: Precision={kf_prec*100:.1f}% Recall={kf_rec*100:.1f}% (TP={kf_tp} FP={kf_fp} FN={kf_fn})")
+        print(f"   Keyframe: Precision={kf_prec*100:.1f}% Recall={kf_rec*100:.1f}% (TP={kf_tp} FP={kf_fp} FN={kf_fn})")
 
-        # 最优模型追踪：keyframe_only 用 F1，否则用 test_acc
+        # Track best model: F1 score for keyframe_only, test_acc otherwise
         if keyframe_only:
             cur_metric = (2 * kf_prec * kf_rec / (kf_prec + kf_rec)) if (kf_prec + kf_rec) > 0 else 0.0
         else:
@@ -285,9 +285,9 @@ def train_model(cfg):
                 _save_thread.join()
             _save_thread = threading.Thread(target=_async_save, args=(best_state, best_path), daemon=True)
             _save_thread.start()
-            print(f"   新最优 {'F1' if keyframe_only else 'Acc'}={cur_metric*100:.2f}%，后台保存中...")
+            print(f"   New Best {'F1' if keyframe_only else 'Acc'}={run_dir} {cur_metric*100:.2f}%, saving in background...")
 
-        # CSV 日志
+        # CSV log entries
         kf_f1 = (2 * kf_prec * kf_rec / (kf_prec + kf_rec)) if (kf_prec + kf_rec) > 0 else 0.0
         row = {
             "epoch":       epoch + 1,
@@ -315,18 +315,18 @@ def train_model(cfg):
 
         print("-" * 75)
 
-    # 保存最终权重
+    # Save final weights
     torch.save(model.state_dict(), final_path)
     if _save_thread is not None:
         _save_thread.join()
-    print(f"训练完成，最终权重: {final_path}")
-    print(f"   最优权重: {best_path}  ({'F1' if keyframe_only else 'Acc'}={best_metric*100:.2f}%)")
+    print(f"Training complete. Final weights saved to: {final_path}")
+    print(f"   Best weights: {best_path}  ({'F1' if keyframe_only else 'Acc'}={best_metric*100:.2f}%)")
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--config", default=None, help="YAML 配置文件路径")
-    parser.add_argument("--smoke", action="store_true", help="只用 1 条数据跑 1 轮，验证流水线")
+    parser.add_argument("--config", default=None, help="Path to the YAML configuration file")
+    parser.add_argument("--smoke", action="store_true", help="Run 1 epoch with 1 sample to validate pipeline")
     args = parser.parse_args()
 
     cfg = load_config(args.config)

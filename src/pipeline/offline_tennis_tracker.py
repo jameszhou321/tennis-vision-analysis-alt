@@ -1,6 +1,6 @@
-"""offline_tennis_tracker.py — 离线网球追踪主模块
+"""offline_tennis_tracker.py — Offline Tennis Tracking Main Module
 
-功能：读取回合视频，使用球场关键点模型+姿态模型，输出带追踪标注的视频
+Function: Read rally videos, use court keypoint models + pose models, and output videos annotated with tracking details.
 """
 import os as _os
 import cv2
@@ -12,11 +12,11 @@ _SRC_DIR = _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))).replac
 _PROJECT_DIR = _os.path.dirname(_SRC_DIR).replace('\\', '/')
 
 # =====================================================================
-# 1. 全局配置区
+# 1. Global Configuration Area
 # =====================================================================
 VIDEO_PATH = f"{_PROJECT_DIR}/data/rallies_annotated/rally_001_19.8s/raw_clip.mp4"
 COURT_MODEL_PATH = f"{_PROJECT_DIR}/runs/court_finetune/court_14pts_ultimate/weights/best.pt"
-POSE_MODEL_PATH = f"{_PROJECT_DIR}/models/yolo/yolo11x-pose.pt"  # 或 yolo26x-pose.pt
+POSE_MODEL_PATH = f"{_PROJECT_DIR}/models/yolo/yolo11x-pose.pt"  # Or yolo26x-pose.pt
 OUTPUT_PATH = f"{_PROJECT_DIR}/results/output_offline_tracker.mp4"
 
 COURT_14_PTS_PHYSICAL = np.array([
@@ -39,7 +39,7 @@ BASE_WEIGHTS = np.array([7, 7, 7, 7, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3], dtype=np.flo
 
 
 # =====================================================================
-# 2. 核心算法库
+# 2. Core Algorithm Library
 # =====================================================================
 def reprojection_residuals(h_elements, src_pts, dst_pts, weights):
     H = np.append(h_elements, 1.0).reshape(3, 3)
@@ -70,7 +70,7 @@ class HomographyFilter:
 
 
 # =====================================================================
-# 3. 离线打分系统 (纯净分数版)
+# 3. Offline Scoring System (Pure Score Version)
 # =====================================================================
 def score_and_select_players(tracks_db):
     TOP_BASELINE, BOTTOM_BASELINE = np.array([0.0, 11.885]), np.array([0.0, -11.885])
@@ -82,29 +82,29 @@ def score_and_select_players(tracks_db):
         is_top = avg_y > 0
         anchor = TOP_BASELINE if is_top else BOTTOM_BASELINE
 
-        # 仅按到底线的距离累加积分，不考虑轨迹存活时长
+        # Accumulate score points purely based on the distance to the baseline, disregarding trajectory lifetime duration
         distances = np.linalg.norm(coords - anchor, axis=1)
-        # 半径 10 米内有效，越近分越高
+        # Valid within a 10-meter radius; the closer, the higher the score
         total_score = np.sum(np.maximum(0, 10.0 - distances))
 
         scored_tracks.append({"id": t_id, "side": "top" if is_top else "bottom", "score": total_score})
 
-    # 严格按照得分最高排序
+    # Sort strictly by the highest score
     top_cands = sorted([t for t in scored_tracks if t["side"] == "top"], key=lambda x: x["score"], reverse=True)
     bot_cands = sorted([t for t in scored_tracks if t["side"] == "bottom"], key=lambda x: x["score"], reverse=True)
 
     res = {}
     if top_cands:
         res["top"] = top_cands[0]["id"]
-        print(f"上方半场胜出 -> ID: {res['top']} (总积分: {top_cands[0]['score']:.1f})")
+        print(f"Top half winner -> ID: {res['top']} (Total Score: {top_cands[0]['score']:.1f})")
     if bot_cands:
         res["bottom"] = bot_cands[0]["id"]
-        print(f"下方半场胜出 -> ID: {res['bottom']} (总积分: {bot_cands[0]['score']:.1f})")
+        print(f"Bottom half winner -> ID: {res['bottom']} (Total Score: {bot_cands[0]['score']:.1f})")
     return res
 
 
 # =====================================================================
-# 4. 雷达UI渲染器
+# 4. Radar UI Renderer
 # =====================================================================
 class RadarDrawer:
     def __init__(self):
@@ -142,7 +142,7 @@ class RadarDrawer:
 
 
 # =====================================================================
-# 5. 主控系统
+# 5. Main Control System
 # =====================================================================
 def main():
     court_model = YOLO(COURT_MODEL_PATH)
@@ -155,7 +155,7 @@ def main():
     h_db = {}
     h_filter = HomographyFilter()
 
-    print("\n[Pass 1] 提取特征中（不显示画面）...")
+    print("\n[Pass 1] Extracting features (no display window)...")
     frame_idx = 0
     prev_H = None
 
@@ -168,8 +168,8 @@ def main():
         if court_res.keypoints is not None and len(court_res.keypoints.data) > 0:
             for i, (x, y, conf) in enumerate(court_res.keypoints.data[0].cpu().numpy()):
                 if conf > 0.4:
-                    v_px.append([x, y]);
-                    v_ph.append(COURT_14_PTS_PHYSICAL[i]);
+                    v_px.append([x, y])
+                    v_ph.append(COURT_14_PTS_PHYSICAL[i])
                     v_w.append(BASE_WEIGHTS[i] * conf)
             if len(v_px) >= 4:
                 raw_H = get_weighted_homography(np.array(v_ph, dtype=np.float32), np.array(v_px, dtype=np.float32),
@@ -179,7 +179,7 @@ def main():
         h_db[frame_idx] = prev_H
 
         if prev_H is not None:
-            # 使用更抗遮挡的 botsort，并放大 imgsz
+            # Use occlusion-resistant BoT-SORT and scale up imgsz
             pose_res = pose_model.track(frame, persist=True, tracker="botsort.yaml", imgsz=1280, verbose=False)[0]
             if pose_res.boxes is not None and pose_res.boxes.id is not None:
                 track_ids = pose_res.boxes.id.int().cpu().tolist()
@@ -192,11 +192,11 @@ def main():
                     l_foot, r_foot = poses[i][15], poses[i][16]
                     box = boxes[i]
 
-                    # 脚部关键点置信度不足时，降级用边界框底边中心作为落点
+                    # When ankle keypoint confidence is low, fall back to using the bottom-center of the bounding box as the placement point
                     if l_foot[2] > 0.2 and r_foot[2] > 0.2:
                         feet_px = (l_foot[:2] + r_foot[:2]) / 2.0
                     else:
-                        # 抓取边框的底边中心作为脚下位置
+                        # Grab the center of the bounding box bottom edge as the feet position
                         feet_px = np.array([(box[0] + box[2]) / 2.0, box[3]])
 
                     pt = np.array([[[feet_px[0], feet_px[1]]]], dtype=np.float32)
@@ -208,7 +208,7 @@ def main():
     final_ids = score_and_select_players(tracks_db)
     id_top, id_bot = final_ids.get("top"), final_ids.get("bottom")
 
-    print("\n[Pass 2] 渲染画面...")
+    print("\n[Pass 2] Rendering display...")
     cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
     out = cv2.VideoWriter(OUTPUT_PATH, cv2.VideoWriter_fourcc(*'mp4v'), fps, (width, height))
     radar = RadarDrawer()
@@ -257,7 +257,7 @@ def main():
     cap.release()
     out.release()
     cv2.destroyAllWindows()
-    print(f"渲染完成，视频已保存。")
+    print(f"Rendering complete! Video saved.")
 
 
 if __name__ == "__main__":

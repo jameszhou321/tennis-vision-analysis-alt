@@ -39,7 +39,7 @@ FAR_COLOR = (70, 150, 255)    # orange-blue
 # --- Utilities ---
 def get_short_path(long_path):
     buf = ctypes.create_unicode_buffer(512)
-    if not hasattr(ctypes, "windll"):  # 非 Windows 直接用原路径
+    if not hasattr(ctypes, "windll"):  # Use the original path directly on non-Windows systems
         return long_path
     ctypes.windll.kernel32.GetShortPathNameW(long_path, buf, 512)
     return buf.value

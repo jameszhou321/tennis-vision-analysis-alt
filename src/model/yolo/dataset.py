@@ -1,6 +1,7 @@
 """
-YOLO 单帧动作分类 — 数据集
-从 rallies_train/ 读取预提取帧（frames/*.jpg）+ annotations.json，返回单帧 (image, label)
+YOLO Single-Frame Action Classification — Dataset
+Reads pre-extracted frames (frames/*.jpg) + annotations.json from rallies_train/ 
+and returns single frames as (image, label).
 """
 
 import os
@@ -14,11 +15,11 @@ from torch.utils.data import Dataset, DataLoader
 
 ACTION_NAMES = ["idle", "forehand", "backhand", "serve", "move"]
 NUM_CLASSES = 5
-IMG_SIZE = 224  # YOLO 分类输入尺寸
+IMG_SIZE = 224  # YOLO classification input size
 
 
 def _read_frame(path):
-    """读取图像（支持中文路径），返回 RGB uint8 [H, W, 3]"""
+    """Reads an image (supports paths containing Chinese characters) and returns RGB uint8 [H, W, 3]"""
     raw = np.fromfile(path, dtype=np.uint8)
     img = cv2.imdecode(raw, cv2.IMREAD_COLOR)
     if img is None:
@@ -29,8 +30,8 @@ def _read_frame(path):
 
 def collect_samples(data_root):
     """
-    遍历 rallies_train/，收集所有帧样本。
-    返回 [(image_path, action_id), ...]
+    Traverses rallies_train/ to collect all frame samples.
+    Returns: [(image_path, action_id), ...]
     """
     samples = []
     rallies = sorted([
@@ -44,14 +45,14 @@ def collect_samples(data_root):
         if not os.path.exists(anno_path):
             continue
 
-        # 使用预提取帧
+        # Use pre-extracted frames
         if not os.path.isdir(frames_dir):
             continue
 
         with open(anno_path, "r", encoding="utf-8") as f:
             anno = json.load(f)
 
-        # 将 annotations 转换为帧级别标签（以 30fps 计）
+        # Convert annotations to frame-level labels (assumes 30fps)
         fps = 30.0
         frame_files = sorted([
             f for f in os.listdir(frames_dir) if f.endswith(".jpg")
@@ -59,7 +60,7 @@ def collect_samples(data_root):
         if not frame_files:
             continue
 
-        # 预计算每帧标签
+        # Pre-compute labels for each frame
         max_idx = int(frame_files[-1].replace(".jpg", "")) + 1
         frame_labels = np.zeros(max_idx, dtype=int)
         for seg in anno:
@@ -79,7 +80,7 @@ def collect_samples(data_root):
 
 
 class TennisFrameDataset(Dataset):
-    """单帧数据集，每样本 = 一张图 + 一个动作标签"""
+    """Single-frame dataset where each sample consists of one image and one action label."""
 
     def __init__(self, samples, augment=False):
         self.samples = samples
@@ -92,12 +93,12 @@ class TennisFrameDataset(Dataset):
         img_path, label = self.samples[idx]
         img = _read_frame(img_path)
 
-        # 简单数据增强（训练集）
+        # Basic data augmentation (for the training set)
         if self.augment:
-            # 随机水平翻转
+            # Random horizontal flip
             if np.random.rand() > 0.5:
                 img = np.fliplr(img).copy()
-            # 随机亮度/对比度调整
+            # Random brightness/contrast adjustment
             if np.random.rand() > 0.5:
                 alpha = 1.0 + np.random.uniform(-0.2, 0.2)
                 beta = np.random.randint(-30, 30)
@@ -105,7 +106,7 @@ class TennisFrameDataset(Dataset):
 
         # HWC → CHW, uint8
         tensor = torch.from_numpy(img.transpose(2, 0, 1)).float().div_(255.0)
-        # ImageNet 归一化
+        # ImageNet normalization
         mean = torch.tensor([0.485, 0.456, 0.406]).view(3, 1, 1)
         std = torch.tensor([0.229, 0.224, 0.225]).view(3, 1, 1)
         tensor = (tensor - mean) / std
@@ -114,7 +115,7 @@ class TennisFrameDataset(Dataset):
 
 
 def split_dataset(data_root, train_ratio=0.8, seed=42):
-    """按 rally 划分训练/测试集（与 mst 训练一致）"""
+    """Splits the dataset into train/test sets by rally (consistent with mst training split)."""
     random.seed(seed)
     import cv2 as _cv2
 
@@ -147,7 +148,7 @@ def split_dataset(data_root, train_ratio=0.8, seed=42):
 
 
 def create_datasets(data_root, train_ratio=0.8):
-    """创建训练和测试数据集"""
+    """Creates training and testing datasets."""
     train_dirs, test_dirs = split_dataset(data_root, train_ratio)
 
     train_samples = []

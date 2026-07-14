@@ -1,32 +1,32 @@
 """
-全局统一引用编号脚本。
-1. 收集所有章节的参考文献
-2. 去重合并
-3. 更新所有正文引用标记
-用法: cd 项目标注与测试 && .venv/Scripts/python src/utils/unify_citations.py
+Global Unified Citation Numbering Script.
+1. Collect references across all thesis chapters
+2. Deduplicate and merge references
+3. Update all in-text citation marker flags
+Usage: cd ProjectAnnotationAndTesting && .venv/Scripts/python src/utils/unify_citations.py
 """
 import re, os, sys
 
 _PROJECT_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-_PAPER_DIR = os.path.join(os.path.dirname(_PROJECT_DIR), "论文")  # 论文在项目外
+_PAPER_DIR = os.path.join(os.path.dirname(_PROJECT_DIR), "Paper")  # Thesis directory is outside the project root
 
 CHAPTERS = [
-    "第一章_绪论.md",
-    "第二章_相关技术基础.md",
-    "第三章_数据集构建与标注工具链.md",
-    "第四章_数据预处理与多模态特征提取.md",
-    "第五章_MSTFormer多流动作识别模型.md",
-    "第六章_实验与分析.md",
-    "第七章_系统集成与Demo应用.md",
-    "第八章_总结与展望+参考文献.md",
+    "Chapter_1_Introduction.md",
+    "Chapter_2_Related_Technical_Fundamentals.md",
+    "Chapter_3_Dataset_Construction_and_Annotation_Toolchain.md",
+    "Chapter_4_Data_Preprocessing_and_Multimodal_Feature_Extraction.md",
+    "Chapter_5_MSTFormer_Multi_Stream_Action_Recognition_Model.md",
+    "Chapter_6_Experiments_and_Analysis.md",
+    "Chapter_7_System_Integration_and_Demo_Application.md",
+    "Chapter_8_Conclusion_and_Future_Work+References.md",
 ]
 
 def parse_references(text):
-    """从正文中提取参考文献列表"""
+    """Extract reference list elements from text content."""
     refs = []
     in_refs = False
     for line in text.split('\n'):
-        if '## 参考文献' in line or '# 参考文献' in line:
+        if '## References' in line or '# References' in line:
             in_refs = True
             continue
         if in_refs:
@@ -36,18 +36,18 @@ def parse_references(text):
             elif line.strip() == '':
                 pass
             elif not line.startswith('['):
-                # 参考文献结束
-                if refs:  # 只有已经收集到引用时才停止
+                # End of reference section
+                if refs:  # Stop evaluating only after collection sequence has initialized
                     break
     return refs
 
 def normalize_ref(text):
-    """标准化参考文献文本用于去重匹配"""
+    """Normalize reference text strings to perform precise deduplication matching."""
     t = text.lower().strip()
-    # 去掉标点和空格
+    # Strip punctuation marks and extra spacing layout markers
     t = re.sub(r'[.,:;\-\[\]\(\)""\'\']', '', t)
     t = re.sub(r'\s+', ' ', t)
-    # 提取作者名+年份的前60个字符作为key
+    # Extract structural components using the first 80 chars as matching criteria hash key
     return t[:80]
 
 def main():
@@ -56,19 +56,19 @@ def main():
     global_refs = []
     chapter_mappings = {}  # chapter -> {old_num -> global_num}
 
-    # 1. 读取所有章节
+    # 1. Read all chapter assets from disk
     for ch in CHAPTERS:
         path = os.path.join(_PAPER_DIR, ch)
         if not os.path.exists(path):
-            print(f"!!  {ch} 不存在，跳过")
+            print(f"!!  {ch} does not exist, skipping asset entry.")
             continue
         with open(path, 'r', encoding='utf-8') as f:
             text = f.read()
         refs = parse_references(text)
         all_chapter_refs[ch] = (text, refs)
-        print(f"[INFO] {ch}: {len(refs)} 条引用")
+        print(f"[INFO] {ch}: {len(refs)} reference entries found")
 
-    # 2. 去重构建全局引用列表
+    # 2. Perform global reference list deduplication and reconstruction
     for ch, (text, refs) in all_chapter_refs.items():
         mapping = {}
         for old_num, full_text in refs:
@@ -82,24 +82,24 @@ def main():
             mapping[old_num] = global_id
         chapter_mappings[ch] = mapping
 
-    print(f"\n[DATA] 全局去重后共 {len(global_refs)} 条引用")
-    print(f"   去重前合计: {sum(len(r) for _,r in all_chapter_refs.values())} 条")
-    print(f"   去重: {sum(len(r) for _,r in all_chapter_refs.values()) - len(global_refs)} 条\n")
+    print(f"\n[DATA] Total unique references after global deduplication: {len(global_refs)}")
+    print(f"   Sum total before deduplication: {sum(len(r) for _,r in all_chapter_refs.values())} entries")
+    print(f"   Deduplicated entries removed: {sum(len(r) for _,r in all_chapter_refs.values()) - len(global_refs)} entries\n")
 
-    # 3. 更新所有正文引用标记并追加全局参考文献
+    # 3. Update all in-text citation marker elements and append global references block
     for ch, (text, refs) in all_chapter_refs.items():
         mapping = chapter_mappings[ch]
 
-        # 替换正文中的所有 [N] 引用标记
-        # 匹配 [数字] 但排除行首的 [数字]（那是参考文献条目本身）
+        # Replace in-text [N] citation markers
+        # Matches [number] but excludes lines beginning with [number] (the reference definitions themselves)
         def replace_ref(m):
             num = int(m.group(1))
             if num in mapping:
                 return f"[{mapping[num]}]"
             return m.group(0)
 
-        # 只替换正文部分（去掉参考文献列表）
-        parts = re.split(r'(## 参考文献|# 参考文献)', text)
+        # Isolate text body segment from original reference lists
+        parts = re.split(r'(## References|# References)', text)
         if len(parts) > 1:
             body = parts[0]
             ref_section = ''.join(parts[1:])
@@ -107,34 +107,34 @@ def main():
             body = text
             ref_section = ''
 
-        # 替换正文中的引用
+        # Replace citation markers in the body context
         new_body = re.sub(r'\[(\d+)\]', replace_ref, body)
 
-        # 生成全局参考文献列表（仅包含本正文中用到的全局引用）
+        # Generate subset of global reference items specifically utilized within this chapter body
         used_global_ids = set(mapping.values())
         global_ref_text = '\n'.join(
             f'[{gid}] {text}' for gid, text in global_refs
             if gid in used_global_ids
         )
 
-        # 替换或追加参考文献
+        # Format and construct unified reference block segments
         if ref_section:
-            new_ref_section = '\n\n## 参考文献（全文统一编号）\n\n' + global_ref_text + '\n'
+            new_ref_section = '\n\n## References (Globally Unified Numbering)\n\n' + global_ref_text + '\n'
         else:
-            new_ref_section = '\n\n## 参考文献（全文统一编号）\n\n' + global_ref_text + '\n'
+            new_ref_section = '\n\n## References (Globally Unified Numbering)\n\n' + global_ref_text + '\n'
 
         new_text = new_body + new_ref_section
 
-        # 写回文件
+        # Persist updated content back to disk source target file paths
         out_path = os.path.join(_PAPER_DIR, ch)
         with open(out_path, 'w', encoding='utf-8') as f:
             f.write(new_text)
 
-        print(f"[OK] {ch}: 引用更新完成 ({len(refs)}→{len(used_global_ids)} 条)")
+        print(f"[OK] {ch}: Citation numbering mapping complete ({len(refs)}→{len(used_global_ids)} entries)")
 
-    # 4. 打印全局引用列表
+    # 4. Export complete global reference lists data output structure metrics
     print(f"\n{'='*60}")
-    print(f"全局参考文献列表（{len(global_refs)} 条）")
+    print(f"Global Reference Bibliography Matrix ({len(global_refs)} entries)")
     print(f"{'='*60}")
     for gid, text in global_refs:
         print(f"[{gid}] {text}")

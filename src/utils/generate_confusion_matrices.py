@@ -1,9 +1,10 @@
 """
-对每个已完成训练的模型，在测试集上逐样本推理，生成精确的混淆矩阵。
-输出两个版本：count（数量）和 percentage（百分比）
+For each fully trained model, run sample-by-sample inference on the test set
+to generate an exact confusion matrix.
+Outputs two versions: count (raw counts) and percentage.
 
-用法:
-  cd 项目标注与测试
+Usage:
+  cd project_annotation_and_testing
   .venv/Scripts/python src/utils/generate_confusion_matrices.py
 """
 
@@ -21,7 +22,7 @@ matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import matplotlib.font_manager as fm
 
-# 尝试使用中文字体
+# Try to use a Chinese-capable font (kept in case any Chinese text is rendered)
 _CHINESE_FONT = None
 for font_name in ['Microsoft YaHei', 'SimHei', 'SimSun', 'Arial Unicode MS', 'Noto Sans CJK SC']:
     try:
@@ -45,7 +46,7 @@ ACTION_NAMES = ["idle", "forehand", "backhand", "serve", "move"]
 ACTION_NAMES_CN = ["待机", "正手", "反手", "发球", "移动"]
 
 def split_dataset(data_root, train_ratio=0.8, seed=42):
-    """与 train.py 完全一致的 split 逻辑"""
+    """Split logic identical to train.py"""
     import cv2
     random.seed(seed)
     clips = []
@@ -79,7 +80,7 @@ def split_dataset(data_root, train_ratio=0.8, seed=42):
 
 
 def find_model_dirs(models_root):
-    """扫描所有已完成训练的模型（有 best.pth 且训练日志有效的模型）"""
+    """Scan all fully trained models (i.e. those with best.pth and a valid training log)"""
     models = []
     for config_name in sorted(os.listdir(models_root)):
         config_dir = os.path.join(models_root, config_name)
@@ -103,7 +104,7 @@ def find_model_dirs(models_root):
 
 
 def compute_cm(preds, labels, num_classes=5):
-    """计算精确的混淆矩阵"""
+    """Compute the exact confusion matrix"""
     cm = np.zeros((num_classes, num_classes), dtype=int)
     for p, l in zip(preds, labels):
         if l >= 0 and l < num_classes:
@@ -112,7 +113,7 @@ def compute_cm(preds, labels, num_classes=5):
 
 
 def plot_cm(cm, title, save_path, fmt="d", vmax=None):
-    """绘制混淆矩阵"""
+    """Plot the confusion matrix"""
     num_classes = cm.shape[0]
     if vmax is None:
         vmax = cm.max()
@@ -120,7 +121,7 @@ def plot_cm(cm, title, save_path, fmt="d", vmax=None):
     fig, ax = plt.subplots(1, 1, figsize=(7, 6))
     im = ax.imshow(cm, cmap='Blues', interpolation='nearest', vmin=0, vmax=vmax)
 
-    # 颜色条
+    # Color bar
     cbar = plt.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
 
     ax.set_xticks(range(num_classes))
@@ -131,7 +132,7 @@ def plot_cm(cm, title, save_path, fmt="d", vmax=None):
     ax.set_ylabel("Ground Truth", fontsize=12)
     ax.set_title(title, fontsize=13, fontweight='bold')
 
-    # 在格子内标注数值
+    # Annotate values inside each cell
     for i in range(num_classes):
         for j in range(num_classes):
             val = cm[i, j]
@@ -148,7 +149,7 @@ def plot_cm(cm, title, save_path, fmt="d", vmax=None):
 
 
 def run_inference(model, test_loader, device, num_classes=5, keyframe_only=False):
-    """运行推理，收集所有预测和标签"""
+    """Run inference, collecting all predictions and labels"""
     all_preds, all_labels = [], []
     model.eval()
     with torch.no_grad():
@@ -160,7 +161,7 @@ def run_inference(model, test_loader, device, num_classes=5, keyframe_only=False
             with torch.amp.autocast("cuda"):
                 if keyframe_only:
                     kf_logits = model(pose, packed)
-                    continue  # keyframe_only 不涉及动作分类
+                    continue  # keyframe_only does not involve action classification
                 else:
                     action_logits, kf_logits = model(pose, packed)
 
@@ -175,7 +176,7 @@ def run_inference(model, test_loader, device, num_classes=5, keyframe_only=False
 
 
 def generate_report(models_root, report_dir):
-    """主流程"""
+    """Main pipeline"""
     os.makedirs(report_dir, exist_ok=True)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Using device: {device}")
@@ -183,10 +184,10 @@ def generate_report(models_root, report_dir):
     models = find_model_dirs(models_root)
     print(f"Found {len(models)} trained models")
 
-    # 过滤：排除 smoke test 和 keyframe_only
+    # Filter out the smoke test and keyframe_only runs
     models = [m for m in models if not (m["config_name"] == "main" and m["ts_name"] == "20260424_194625")]
-    # 排除 keyframe_only 配置
-    # (没有 keyframe_only 配置，全部跳过)
+    # Exclude keyframe_only configs
+    # (there is no keyframe_only config, so all are skipped)
 
     results = []
 
@@ -195,7 +196,7 @@ def generate_report(models_root, report_dir):
         print(f"Model: {m['config_name']}/{m['ts_name']}")
         print(f"{'='*60}")
 
-        # 加载配置
+        # Load config
         cfg = load_config(m["config_path"])
         cfg["_yaml_path"] = m["config_path"]
         data_root = cfg.get("data_root", "data/rallies_train")
@@ -206,21 +207,21 @@ def generate_report(models_root, report_dir):
             results.append((m, None, None))
             continue
 
-        # 重建数据划分
+        # Reconstruct the data split
         train_dirs, test_dirs = split_dataset(data_root, train_ratio)
         print(f"  Train: {len(train_dirs)} clips, Test: {len(test_dirs)} clips")
 
-        # 创建测试数据集
+        # Create the test dataset
         test_ds = TennisActionDataset(cfg, clip_dirs=test_dirs, augment=False)
         test_loader = DataLoader(test_ds, batch_size=1, shuffle=False, num_workers=0)
 
-        # 加载模型
+        # Load the model
         model = MSTFormer(cfg).to(device)
         state = torch.load(m["best_path"], map_location=device, weights_only=True)
         model.load_state_dict(state, strict=False)
         print(f"  Loaded best.pth from {m['best_path']}")
 
-        # 推理
+        # Run inference
         preds, labels = run_inference(model, test_loader, device)
 
         if preds is None or len(preds) == 0:
@@ -228,11 +229,11 @@ def generate_report(models_root, report_dir):
             results.append((m, None, None))
             continue
 
-        # 计算混淆矩阵
+        # Compute the confusion matrix
         cm = compute_cm(preds, labels)
         acc = np.trace(cm) / cm.sum() * 100
 
-        # 每类指标
+        # Per-class metrics
         per_class_recall = []
         per_class_precision = []
         for i in range(5):
@@ -257,7 +258,7 @@ def generate_report(models_root, report_dir):
             "labels": labels,
         }))
 
-        # 绘制数量版混淆矩阵
+        # Plot the count-based confusion matrix
         safe_name = f"{m['config_name']}_{m['ts_name'][:8]}"
         vmax = cm.max()
 
@@ -266,7 +267,7 @@ def generate_report(models_root, report_dir):
                 os.path.join(report_dir, f"confusion_cnt_{safe_name}.png"),
                 fmt="d", vmax=vmax)
 
-        # 绘制百分比版（行归一化）
+        # Plot the percentage version (row-normalized)
         cm_pct = np.zeros_like(cm, dtype=float)
         for i in range(5):
             row_sum = cm[i, :].sum()
@@ -278,7 +279,7 @@ def generate_report(models_root, report_dir):
                 os.path.join(report_dir, f"confusion_pct_{safe_name}.png"),
                 fmt=".1f", vmax=100)
 
-        # 列归一化（精确率视角）
+        # Column-normalized (precision view)
         cm_col_pct = np.zeros_like(cm, dtype=float)
         for j in range(5):
             col_sum = cm[:, j].sum()
@@ -290,7 +291,7 @@ def generate_report(models_root, report_dir):
                 os.path.join(report_dir, f"confusion_colpct_{safe_name}.png"),
                 fmt=".1f", vmax=100)
 
-        # 生成 PDF 合成图（三合一）
+        # Generate the combined PDF-style figure (three panels in one)
         fig, axes = plt.subplots(1, 3, figsize=(18, 5.5))
 
         for ax, cm_data, title, fmt, vm in [
@@ -326,16 +327,16 @@ def generate_report(models_root, report_dir):
                    dpi=150, bbox_inches='tight')
         plt.close(fig)
 
-    # 生成汇总表格
+    # Generate the summary table
     report_md = os.path.join(report_dir, "confusion_report.md")
-    lines = ["# 精确混淆矩阵报告 (逐样本推理)",
+    lines = ["# Exact Confusion Matrix Report (Sample-by-Sample Inference)",
              "",
-             f"**生成日期：** 2026-04-28",
-             f"**方法：** 加载各模型 best.pth，在测试集上逐样本推理后统计混淆矩阵",
+             f"**Generated on:** 2026-04-28",
+             f"**Method:** Load each model's best.pth, run sample-by-sample inference on the test set, and tabulate the confusion matrix",
              "",
-             "## 汇总表",
+             "## Summary Table",
              "",
-             "| 模型 | 准确率 | 测试样本数 | 各类召回率 (idle/FH/BH/serve/move) |",
+             "| Model | Accuracy | Test Samples | Per-Class Recall (idle/FH/BH/serve/move) |",
              "|---|---:|---:|:---|",
              ]
 
@@ -350,12 +351,12 @@ def generate_report(models_root, report_dir):
                      f"| {rec_str} |")
 
     lines.append("")
-    lines.append("## 说明")
+    lines.append("## Notes")
     lines.append("")
-    lines.append("- `confusion_cnt_*.png` = 数量版混淆矩阵")
-    lines.append("- `confusion_pct_*.png` = 行归一化百分比（召回率视角）")
-    lines.append("- `confusion_colpct_*.png` = 列归一化百分比（精确率视角）")
-    lines.append("- `confusion_triple_*.png` = 三合一对比图")
+    lines.append("- `confusion_cnt_*.png` = count-based confusion matrix")
+    lines.append("- `confusion_pct_*.png` = row-normalized percentage (recall view)")
+    lines.append("- `confusion_colpct_*.png` = column-normalized percentage (precision view)")
+    lines.append("- `confusion_triple_*.png` = combined three-panel comparison figure")
     lines.append("")
 
     with open(report_md, "w", encoding="utf-8") as f:

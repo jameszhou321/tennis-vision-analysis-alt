@@ -1,8 +1,8 @@
-# 主配置 — 共享骨干版
-# 相对 main.yaml 的改动：seq_len=60（缩短序列）、embed_dim=256（扩大嵌入）、share_yolo_backbone=true（三路视觉共享同一YOLO骨干）
-# 用法: python src/model/mst/train.py --config configs/main_shared.yaml
+# Main Configuration — Shared Backbone Version
+# Changes relative to main.yaml: seq_len=60 (shorter sequence), embed_dim=256 (larger embedding), share_yolo_backbone=true (three visual streams share the same YOLO backbone)
+# Usage: python src/model/mst/train.py --config configs/main_shared.yaml
 
-# ── 数据 ──────────────────────────────────────────────────────────────────────
+# ── Data ──────────────────────────────────────────────────────────────────────
 data_root: "data/rallies_train"
 crops_root: "data/rallies_train"
 seq_len: 60
@@ -12,7 +12,7 @@ train_ratio: 0.8
 num_classes: 5
 class_weights: [1.0, 4.0, 5.0, 4.0, 1.5]
 
-# ── 模型架构 ───────────────────────────────────────────────────────────────────
+# ── Model Architecture ──────────────────────────────────────────────────────────
 use_visual: true
 use_player_crops: true
 use_pose: true
@@ -26,15 +26,15 @@ tokens_per_scale: 4
 visual_tokens: 16
 merge_visual_tokens: true
 parallel_backbones: false
-share_yolo_backbone: true            # p1/p2 复用全局骨干，参数量 10.7M → 4.9M
+share_yolo_backbone: true            # p1/p2 reuse the global backbone, parameter count 10.7M → 4.9M
 
-# ── 模型超参 ───────────────────────────────────────────────────────────────────
+# ── Model Hyperparameters ──────────────────────────────────────────────────────
 embed_dim: 256
 depth: 8
 num_heads: 4
 dropout: 0.3
 
-# ── 训练 ───────────────────────────────────────────────────────────────────────
+# ── Training ───────────────────────────────────────────────────────────────────
 batch_size: 2
 virtual_batch_size: 64
 total_epochs: 100
@@ -45,7 +45,7 @@ loss: "focal"
 focal_gamma: 2.0
 keyframe_loss_weight: 0.5
 
-# ── 硬件 ───────────────────────────────────────────────────────────────────────
-num_workers: 4                      # 多进程加载数据，CPU 预处理并行化（原为 2）
+# ── Hardware ───────────────────────────────────────────────────────────────────
+num_workers: 4                      # Multi-process data loading, parallelized CPU preprocessing (originally 2)
 pin_memory: true
 transformer_checkpoint: true

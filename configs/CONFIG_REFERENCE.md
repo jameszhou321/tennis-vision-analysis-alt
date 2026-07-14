@@ -1,126 +1,126 @@
-# MSTFormer 配置字段参考手册
+# MSTFormer Configuration Fields Reference Manual
 
-> 基于代码分析自动生成，覆盖 `model_main.py`、`backbone_factory.py`、`train.py`、`dataset.py`、`config.py`。
-> 更新：2026-04-24
+> Automatically generated based on code analysis, covering `model_main.py`, `backbone_factory.py`, `train.py`, `dataset.py`, and `config.py`.
+> Updated: 2026-04-24
 
 ---
 
-## 一、数据字段
+## 1. Data Fields
 
-| 字段 | 必须 | 默认值 | 作用 |
+| Field | Required | Default Value | Role / Purpose |
 |------|------|--------|------|
-| `data_root` | ✅ | — | 训练数据根目录（含各 rally 子目录） |
-| `crops_root` | ✅ | — | 球员裁剪图根目录（通常与 data_root 相同） |
-| `seq_len` | ✅ | — | 每个样本的序列帧数（如 120） |
-| `min_seq_len` | ❌ | `max(30, seq_len//2)` | reshuffle 时切片最短帧数，仅当 `reshuffle_augment=true` 生效 |
-| `train_ratio` | ✅ | — | 训练集占比（0~1） |
-| `num_classes` | ✅ | — | 动作分类类别数（当前为 5） |
-| `class_weights` | ✅ | — | 各类别损失权重列表，长度须等于 `num_classes` |
+| `data_root` | ✅ | — | Root directory for training data (contains individual rally subdirectories) |
+| `crops_root` | ✅ | — | Root directory for player crops (typically the same as data_root) |
+| `seq_len` | ✅ | — | Sequence frame length per sample (e.g., 120) |
+| `min_seq_len` | ❌ | `max(30, seq_len//2)` | Shortest slice frame length during reshuffling; only takes effect when `reshuffle_augment=true` |
+| `train_ratio` | ✅ | — | Training set split ratio (0 to 1) |
+| `num_classes` | ✅ | — | Number of action classification classes (currently 5) |
+| `class_weights` | ✅ | — | List of loss weights for each class; length must equal `num_classes` |
 
 ---
 
-## 二、模型架构开关
+## 2. Model Architecture Switches
 
-| 字段 | 必须 | 默认值 | 作用 | 冲突/依赖 |
+| Field | Required | Default Value | Role / Purpose | Conflict / Dependency |
 |------|------|--------|------|-----------|
-| `use_visual` | ❌ | `true` | 是否启用视觉流；`false` 为纯姿态模式 | `false` 时所有视觉相关字段均无效 |
-| `use_player_crops` | ❌ | `true` | 是否加载球员裁剪图（p1/p2）；`false` 时仅全帧一路 | 仅当 `use_visual=true` 生效 |
-| `use_pose` | ❌ | `true` | 是否使用姿态特征；`false` 时 pose 向量置零（token 槽保留） | 无 |
-| `use_pos_encoding` | ❌ | `false` | 是否启用正弦位置编码；关闭时模型不依赖绝对位置信息 | 无 |
-| `keyframe_only` | ❌ | `false` | `true` 时仅训练关键帧检测头，不建 action_head | `true` 时 `keyframe_loss_weight` 无效 |
-| `merge_visual_tokens` | ❌ | `false` | `true` 时三路 token cat 后过 shared_resampler 压到 `visual_tokens` 个 | 仅当 `use_visual=true` 且 `use_player_crops=true` 有意义 |
-| `parallel_backbones` | ❌ | `false` | `true` 时三路骨干并行（需更多显存，单卡易 OOM） | 仅当 `use_visual=true` 且 `use_player_crops=true` 生效 |
+| `use_visual` | ❌ | `true` | Whether to enable the visual stream; `false` sets the model to pure pose mode | When `false`, all visual-related fields become ineffective |
+| `use_player_crops` | ❌ | `true` | Whether to load player cropped images (p1/p2); when `false`, only the full-frame stream is used | Only takes effect when `use_visual=true` |
+| `use_pose` | ❌ | `true` | Whether to use pose features; when `false`, the pose vector is set to zero (token slot is still retained) | None |
+| `use_pos_encoding` | ❌ | `false` | Whether to enable sinusoidal position encoding; when closed, the model does not rely on absolute positional info | None |
+| `keyframe_only` | ❌ | `false` | When `true`, trains only the keyframe detection head and skips building the action_head | When `true`, `keyframe_loss_weight` becomes ineffective |
+| `merge_visual_tokens` | ❌ | `false` | When `true`, the three-stream tokens are concatenated and passed through a shared_resampler down to `visual_tokens` | Only meaningful when `use_visual=true` and `use_player_crops=true` |
+| `parallel_backbones` | ❌ | `false` | When `true`, the three-stream backbones run in parallel (requires more VRAM, prone to single-card OOM) | Only takes effect when `use_visual=true` and `use_player_crops=true` |
 
 ---
 
-## 三、视觉骨干网络
+## 3. Visual Backbone Networks
 
-### 通用字段
+### General Fields
 
-| 字段 | 必须 | 默认值 | 作用 | 生效条件 |
+| Field | Required | Default Value | Role / Purpose | Trigger Condition |
 |------|------|--------|------|----------|
-| `visual_backbone` | ❌ | `"yolo11"` | 骨干类型：`yolo11` / `vit` / `resnet18` / `raw` | `use_visual=true` |
-| `visual_tokens` | ❌ | `16` | 最终每路输出的视觉 token 数 | `visual_backbone="yolo11"` 时控制 TokenResampler 输出；`merge_visual_tokens=true` 时控制合并后总数；**vit 模式下无效** |
+| `visual_backbone` | ❌ | `"yolo11"` | Backbone type: `yolo11` / `vit` / `resnet18` / `raw` | `use_visual=true` |
+| `visual_tokens` | ❌ | `16` | Final number of visual tokens outputted per stream | Controls TokenResampler output when `visual_backbone="yolo11"`; controls total combined number when `merge_visual_tokens=true`; **ineffective in vit mode** |
 
-### yolo11 专属
+### yolo11-Specific
 
-| 字段 | 必须 | 默认值 | 作用 | 生效条件 |
+| Field | Required | Default Value | Role / Purpose | Trigger Condition |
 |------|------|--------|------|----------|
-| `backbone_weights` | ✅* | — | p1/p2 骨干权重路径（yolo11n-pose.pt） | `visual_backbone="yolo11"` |
-| `global_backbone_weights` | ❌ | 同 `backbone_weights` | 全帧骨干权重路径（yolo11n.pt）；不填则与 p1/p2 共用 | `visual_backbone="yolo11"` 且 `use_player_crops=true` |
-| `unfreeze_backbone` | ❌ | `false` | `true` 时解冻骨干参数并启用 gradient checkpointing | `visual_backbone="yolo11"`；**vit 模式下无效** |
-| `multi_scale_levels` | ✅* | — | 多尺度特征层级，如 `[3, 4, 5]` 对应 P3/P4/P5 | `visual_backbone="yolo11"` |
-| `tokens_per_scale` | ✅* | — | 每个尺度 spatial pool 后的 token 数（如 4 → 2×2） | `visual_backbone="yolo11"` |
+| `backbone_weights` | ✅* | — | Weights path for p1/p2 backbones (yolo11n-pose.pt) | `visual_backbone="yolo11"` |
+| `global_backbone_weights` | ❌ | Same as `backbone_weights` | Weights path for full-frame backbone (yolo11n.pt); if left blank, shares the same weights as p1/p2 | `visual_backbone="yolo11"` and `use_player_crops=true` |
+| `unfreeze_backbone` | ❌ | `false` | When `true`, unfreezes backbone parameters and enables gradient checkpointing | `visual_backbone="yolo11"`; **ineffective in vit mode** |
+| `multi_scale_levels` | ✅* | — | Multi-scale feature levels, e.g., `[3, 4, 5]` corresponding to P3/P4/P5 | `visual_backbone="yolo11"` |
+| `tokens_per_scale` | ✅* | — | Number of tokens after spatial pooling for each scale (e.g., 4 → 2×2) | `visual_backbone="yolo11"` |
 
-> ✅* 表示在 `visual_backbone="yolo11"` 时为必须字段（代码硬读，缺失报 KeyError）；vit 模式下这些字段可以写占位值，不会被读取。
+> ✅* indicates that the field is required when `visual_backbone="yolo11"` (hard-coded read, missing it will throw a KeyError). In vit mode, placeholders can be used for these fields as they will not be read.
 
-### vit 专属
+### vit-Specific
 
-| 字段 | 必须 | 默认值 | 作用 | 生效条件 |
+| Field | Required | Default Value | Role / Purpose | Trigger Condition |
 |------|------|--------|------|----------|
-| `vit_patch_grid` | ❌ | `4` | patch 网格大小，patch token 经 TokenResampler 压到 `visual_tokens` 个 | `visual_backbone="vit"` |
+| `vit_patch_grid` | ❌ | `4` | Patch grid size; patch tokens are compressed down to `visual_tokens` via TokenResampler | `visual_backbone="vit"` |
 
-> `vit_depth` / `vit_num_heads` 已废弃（session15 重构后 ViT 内部无 Transformer，字段保留兼容性但不被读取）。
+> `vit_depth` / `vit_num_heads` are deprecated (following the session15 refactor, ViT has no internal Transformer; the fields remain for compatibility but are not read).
 
 ---
 
-## 四、模型超参
+## 4. Model Hyperparameters
 
-| 字段 | 必须 | 默认值 | 作用 |
+| Field | Required | Default Value | Role / Purpose |
 |------|------|--------|------|
-| `embed_dim` | ✅ | — | 模型嵌入维度（所有 token 的统一维度） |
-| `depth` | ✅ | — | 主 TransformerEncoder 层数 |
-| `num_heads` | ✅ | — | 主 Transformer 多头注意力头数（须能整除 `embed_dim`） |
-| `dropout` | ❌ | `0.1` | Transformer 层 dropout 比例 |
+| `embed_dim` | ✅ | — | Model embedding dimension (the uniform dimension for all tokens) |
+| `depth` | ✅ | — | Number of primary TransformerEncoder layers |
+| `num_heads` | ✅ | — | Number of attention heads for the main Transformer (must be divisible by `embed_dim`) |
+| `dropout` | ❌ | `0.1` | Dropout ratio for the Transformer layers |
 
 ---
 
-## 五、训练超参
+## 5. Training Hyperparameters
 
-| 字段 | 必须 | 默认值 | 作用 | 冲突/依赖 |
+| Field | Required | Default Value | Role / Purpose | Conflict / Dependency |
 |------|------|--------|------|-----------|
-| `batch_size` | ✅ | — | 实际批大小 | 须能整除 `virtual_batch_size` |
-| `virtual_batch_size` | ✅ | — | 虚拟批大小；`accumulation_steps = virtual_batch_size / batch_size` | 须为 `batch_size` 的整数倍 |
-| `total_epochs` | ✅ | — | 总训练轮数 | |
-| `learning_rate` | ✅ | — | 初始学习率（AdamW） | |
-| `weight_decay` | ✅ | — | AdamW 权重衰减 | |
-| `warmup_epochs` | ❌ | `5` | 线性 warmup 轮数，之后余弦退火到 `lr × 0.01` | |
-| `loss` | ❌ | `"cross_entropy"` | 损失函数：`cross_entropy` 或 `focal` | |
-| `focal_gamma` | ❌ | `2.0` | Focal Loss 的 γ 参数 | 仅当 `loss="focal"` 生效 |
-| `keyframe_loss_weight` | ❌ | `0.5` | 关键帧 loss 权重：`total = loss_action + weight × loss_kf` | 仅当 `keyframe_only=false` 生效 |
+| `batch_size` | ✅ | — | Actual batch size | Must be evenly divisible by `virtual_batch_size` |
+| `virtual_batch_size` | ✅ | — | Virtual batch size; `accumulation_steps = virtual_batch_size / batch_size` | Must be an integer multiple of `batch_size` |
+| `total_epochs` | ✅ | — | Total number of training epochs | |
+| `learning_rate` | ✅ | — | Initial learning rate (AdamW) | |
+| `weight_decay` | ✅ | — | Weight decay coefficient (AdamW) | |
+| `warmup_epochs` | ❌ | `5` | Linear warmup epochs, followed by cosine annealing down to `lr × 0.01` | |
+| `loss` | ❌ | `"cross_entropy"` | Loss function: `cross_entropy` or `focal` | |
+| `focal_gamma` | ❌ | `2.0` | The γ parameter for Focal Loss | Only takes effect when `loss="focal"` |
+| `keyframe_loss_weight` | ❌ | `0.5` | Keyframe loss weight: `total = loss_action + weight × loss_kf` | Only takes effect when `keyframe_only=false` |
 
 ---
 
-## 六、硬件与数据加载
+## 6. Hardware & Data Loading
 
-| 字段 | 必须 | 默认值 | 作用 |
+| Field | Required | Default Value | Role / Purpose |
 |------|------|--------|------|
-| `num_workers` | ✅ | — | DataLoader 工作进程数（Windows 建议 2） |
-| `pin_memory` | ✅ | — | 是否锁定内存加速 GPU 传输 |
-| `reshuffle_augment` | ❌ | `true` | `true` 时每 epoch 随机重划训练切片（时序增强） |
-| `image_augment` | ❌ | `false` | `true` 时训练集开启图像级增强：颜色抖动/高斯噪声/模糊/随机擦除/半透明覆盖 |
-| `transformer_checkpoint` | ❌ | `true` | `true` 时 Transformer 层启用 gradient checkpointing，省显存约 50% |
+| `num_workers` | ✅ | — | Number of DataLoader worker processes (2 is recommended for Windows) |
+| `pin_memory` | ✅ | — | Whether to lock memory to accelerate GPU data transfer |
+| `reshuffle_augment` | ❌ | `true` | When `true`, randomly re-slices training segments each epoch (temporal augmentation) |
+| `image_augment` | ❌ | `false` | When `true`, enables image-level data augmentation on the training set: color jitter / Gaussian noise / blur / random erasing / semi-transparent overlays |
+| `transformer_checkpoint` | ❌ | `true` | When `true`, enables gradient checkpointing for Transformer layers, saving roughly 50% VRAM |
 
 ---
 
-## 七、自动生成字段（勿手动填写）
+## 7. Automatically Generated Fields (Do Not Manually Fill)
 
-以下字段由 `config.py` 或 `train.py` 在运行时自动注入，不应出现在 YAML 中：
+The following fields are automatically injected at runtime by `config.py` or `train.py` and should not appear in your YAML files:
 
-| 字段 | 来源 | 说明 |
+| Field | Source | Explanation |
 |------|------|------|
-| `device` | `config.py` | 自动检测 cuda / cpu |
-| `accumulation_steps` | `config.py` | `virtual_batch_size / batch_size` |
-| `_yaml_path` | `train.py` | 配置文件路径，用于日志记录 |
-| `_smoke_clip` | `train.py` | `--smoke` 模式下的测试 clip 路径 |
+| `device` | `config.py` | Automatically detects cuda / cpu |
+| `accumulation_steps` | `config.py` | Calculated as `virtual_batch_size / batch_size` |
+| `_yaml_path` | `train.py` | File path of the configuration file, used for logging |
+| `_smoke_clip` | `train.py` | Test clip path used under `--smoke` mode |
 
 ---
 
-## 八、各配置文件字段有效性速查
+## 8. Configuration Field Validity Quick Reference Matrix
 
-### 主配置
+### Main Configuration
 
-| 字段 | main |
+| Field | main |
 |------|:----:|
 | `use_visual` | ✅ |
 | `use_player_crops` | ✅ |
@@ -131,32 +131,32 @@
 
 ### ablation/
 
-| 字段 | abl_no_pose | abl_no_crops | abl_no_visual | abl_global_only |
+| Field | abl_no_pose | abl_no_crops | abl_no_visual | abl_global_only |
 |------|:-----------:|:------------:|:-------------:|:---------------:|
 | `use_visual` | ✅ | ✅ | ❌ false | ✅ |
 | `use_player_crops` | ✅ | ❌ false | ❌ false | ❌ false |
-| `use_pose` | ❌ false（置零） | ✅ | ✅ | ❌ false（置零） |
+| `use_pose` | ❌ false (set to zero) | ✅ | ✅ | ❌ false (set to zero) |
 
 ### components/
 
-| 字段 | cmp_focal_loss | cmp_ce_loss | cmp_no_merge | cmp_resnet_backbone | cmp_frozen_backbone |
+| Field | cmp_focal_loss | cmp_ce_loss | cmp_no_merge | cmp_resnet_backbone | cmp_frozen_backbone |
 |------|:--------------:|:-----------:|:------------:|:-------------------:|:-------------------:|
 | `loss` | focal | cross_entropy | focal | focal | focal |
 | `merge_visual_tokens` | ✅ true | ✅ true | ❌ false | ✅ true | ✅ true |
 | `visual_backbone` | yolo11 | yolo11 | yolo11 | resnet18 | yolo11 |
 | `unfreeze_backbone` | ✅ | ✅ | ✅ | ✅ | ❌ false |
 
-> "占位"：字段存在但代码不读取（因走了不同分支），删除会报 KeyError；"无效"：字段不存在或存在均不影响结果。
+> "Placeholder": The field exists but is not read by the code (due to hitting a different branch). Deleting it will cause a KeyError. "Ineffective": The field presence or value does not affect the program outcome.
 
 ---
 
-## 九、常见配置错误
+## 9. Common Configuration Errors
 
-| 错误 | 后果 |
+| Error | Consequence |
 |------|------|
-| `num_heads` 不能整除 `embed_dim` | 运行时报错 |
-| `batch_size` 不能整除 `virtual_batch_size` | 梯度累积步数为小数，训练行为异常 |
-| `vit` 模式下设置 `visual_tokens` | 无效，token 数由 `vit_patch_grid²` 固定 |
-| `merge_visual_tokens=true` 但 `use_player_crops=false` | shared_resampler 只处理一路，合并无意义 |
-| `loss="cross_entropy"` 时设置 `focal_gamma` | 无效，不影响运行但容易误导 |
-| `keyframe_only=true` 时设置 `keyframe_loss_weight` | 无效，只有关键帧 loss，无动作 loss 可加权 |
+| `num_heads` is not evenly divisible by `embed_dim` | Throws a runtime error. |
+| `batch_size` cannot evenly divide `virtual_batch_size` | Gradient accumulation steps evaluate to a float; training behavior becomes abnormal. |
+| Setting `visual_tokens` while in `vit` mode | Ineffective; the token count is fixed by `vit_patch_grid²`. |
+| `merge_visual_tokens=true` but `use_player_crops=false` | The shared_resampler only processes a single stream; token merging is meaningless here. |
+| Setting `focal_gamma` when `loss="cross_entropy"` | Ineffective; it doesn't affect execution but can be highly misleading. |
+| Setting `keyframe_loss_weight` when `keyframe_only=true` | Ineffective; there is only keyframe loss, so no action loss exists to weight against it. |

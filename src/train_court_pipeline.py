@@ -1,6 +1,6 @@
-"""train_court_pipeline.py — 球场关键点模型训练入口
+"""train_court_pipeline.py — Tennis Court Keypoints Model Training Entry Point
 
-功能：准备数据集 YAML、启动 YOLO 微调训练、导出 Bad Cases 用于迭代优化
+Function: Prepares the dataset YAML configuration, starts YOLO fine-tuning training, and exports bad cases for iterative optimization.
 """
 import os
 import glob
@@ -9,7 +9,7 @@ import numpy as np
 from ultralytics import YOLO
 
 # =====================================================================
-# 核心路径配置
+# Core Path Configurations
 # =====================================================================
 CURRENT_DIR = os.path.dirname(os.path.abspath(__file__)).replace('\\', '/')
 PROJECT_DIR = os.path.dirname(CURRENT_DIR).replace('\\', '/')
@@ -30,7 +30,8 @@ def prepare_env():
     caches = glob.glob(f"{DATASET_DIR}/**/*.cache", recursive=True)
     for c in caches:
         try:
-            os.remove(c); print(f"已清理旧缓存: {c}")
+            os.remove(c)
+            print(f"Cleared old cache file: {c}")
         except:
             pass
 
@@ -40,24 +41,24 @@ def prepare_env():
         f.write("train: train/images\nval: val/images\nnames:\n  0: tennis_court\n")
         f.write("kpt_shape: [14, 3]\n")
 
-        # 远端/近端关键点 7:3 加权（OKS sigma，越小权重越高）
-        # 假设 0,1 为远端 (画面上方)，2,3 为近端 (画面下方)
-        # 远端 sigma=0.0065 (极高权重)，近端 sigma=0.010 (高权重)，其余点 0.050 (低权重)
+        # 7:3 Weighting between far-end and near-end keypoints (OKS sigma, smaller values yield higher weights)
+        # Assuming points 0 and 1 belong to the far end (top of the frame), points 2 and 3 belong to the near end (bottom of the frame)
+        # Far-end sigma=0.0065 (extremely high weight), near-end sigma=0.010 (high weight), remaining points 0.050 (low weight)
         f.write(
             "sigmas: [0.0065, 0.0065, 0.010, 0.010, 0.050, 0.050, 0.050, 0.050, 0.050, 0.050, 0.050, 0.050, 0.050, 0.050]\n")
     return yaml_path
 
 
 def train_model(yaml_path):
-    print("\n开始球场关键点模型训练...")
+    print("\nStarting court keypoint model training...")
 
     previous_best = f"{RUNS_DIR}/court_14pts_weighted/weights/best.pt"
     if os.path.exists(previous_best):
-        print(f"继承基座模型: {previous_best}")
+        print(f"Inheriting baseline model: {previous_best}")
         model = YOLO(previous_best)
     else:
         fallback = f"{PROJECT_DIR}/models/yolo/yolov8n-pose.pt"
-        print(f"[!] 未找到基座模型，使用: {fallback}")
+        print(f"[!] Baseline model not found, using fallback: {fallback}")
         model = YOLO(fallback)
 
     os.makedirs(RUNS_DIR, exist_ok=True)
@@ -65,22 +66,22 @@ def train_model(yaml_path):
     model.train(
         data=yaml_path,
         epochs=300,
-        imgsz=960,  # 大图输入，提升小关键点定位精度
-        batch=8,  # 16G 显存完全能吃下 batch=8，梯度更平滑
-        workers=4,  # 提升 CPU 数据加载线程
+        imgsz=960,  # Large image input to improve localization precision for minor keypoints
+        batch=8,  # A batch size of 8 perfectly fits a 16GB VRAM constraint, providing smoother gradients
+        workers=4,  # Increase CPU data loading threads
         cache=False,
         device='cuda:0',
         project=RUNS_DIR,
         name='court_14pts_ultimate',
         exist_ok=True,
         patience=50,
-        close_mosaic=280  # 前 20 轮启用 mosaic 增强，之后关闭
+        close_mosaic=280  # Enable Mosaic augmentation for the first 20 epochs, then turn off
     )
     return f"{RUNS_DIR}/court_14pts_ultimate/weights/best.pt"
 
 
 def export_bad_cases(best_weight_path):
-    print(f"\n开始扫描验证集，使用的权重路径: {best_weight_path}")
+    print(f"\nScanning validation set using weight path: {best_weight_path}")
     os.makedirs(BAD_CASE_DIR, exist_ok=True)
 
     if not os.path.exists(best_weight_path):
@@ -125,7 +126,7 @@ def export_bad_cases(best_weight_path):
             save_path = f"{BAD_CASE_DIR}/Bad_{base_name}"
             cv2.imencode('.jpg', img)[1].tofile(save_path)
 
-    print(f"诊断结束！发现 {bad_count} 张 Bad Cases，保存在: {BAD_CASE_DIR}")
+    print(f"Diagnostic scan complete! Found {bad_count} Bad Cases, exported to: {BAD_CASE_DIR}")
 
 
 if __name__ == "__main__":

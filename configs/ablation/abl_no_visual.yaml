@@ -1,5 +1,5 @@
-﻿# 消融实验：纯姿态（use_visual=false，无视觉流）
-# 对比 main.yaml，量化视觉特征的整体贡献
+﻿# Ablation Study: Pure Pose (use_visual=false, no visual stream)
+# Comparison with main.yaml to quantify the overall contribution of visual features
 
 data_root: "data/rallies_train"
 crops_root: "data/rallies_train"
@@ -10,7 +10,7 @@ train_ratio: 0.8
 num_classes: 5
 class_weights: [1.0, 4.0, 5.0, 4.0, 1.5]
 
-use_visual: false                # ← 变量：关闭所有视觉流
+use_visual: false                # ← Variable: Disable all visual streams
 use_player_crops: false
 use_pose: true
 use_pos_encoding: false
@@ -29,7 +29,7 @@ depth: 8
 num_heads: 4
 dropout: 0.3
 
-batch_size: 8                    # 无视觉流显存压力小，batch 可适当调大
+batch_size: 8                    # Low VRAM pressure without visual streams, batch size can be appropriately increased
 virtual_batch_size: 64
 total_epochs: 40
 learning_rate: 1.0e-4

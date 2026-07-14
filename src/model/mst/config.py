@@ -1,4 +1,4 @@
-"""config.py — YAML 配置解析器"""
+"""config.py — YAML Configuration Parser"""
 import os
 import torch
 import yaml
@@ -6,7 +6,7 @@ import yaml
 
 def load_config(yaml_path=None):
     _mst_dir = os.path.dirname(os.path.abspath(__file__))          # .../src/model/mst
-    _project_dir = os.path.dirname(os.path.dirname(os.path.dirname(_mst_dir)))  # .../项目标注与测试
+    _project_dir = os.path.dirname(os.path.dirname(os.path.dirname(_mst_dir)))  # .../Project-Annotation-and-Testing
 
     if yaml_path is None:
         yaml_path = os.path.join(_project_dir, "configs", "main.yaml")

@@ -1,7 +1,10 @@
 """
-对 data/rallies_annotated/ 中旧数据（pose_data.json 缺少 court 字段）补充球场关键点。
-逐帧跑 court 模型，将 14 个关键点写入每帧的 court 字段。
-支持断点续跑：若第一帧已有 court 字段则跳过。
+add_court_keypoints.py — Complementing Court Keypoints for Annotated Rallies
+
+Function: Complements court keypoints for legacy data in data/rallies_annotated/
+          (where pose_data.json lacks the "court" field). It runs a court detection
+          model frame-by-frame and writes 14 keypoints into the "court" field of each frame.
+          Supports breakpoint resumption: skips processing if the first valid frame already has a "court" field.
 """
 import os
 import json
@@ -16,15 +19,16 @@ _PROJECT_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(_
 
 
 def get_short_path(path):
+    """Retrieves the Windows short path name to prevent path parsing issues with special characters/spaces."""
     buf = ctypes.create_unicode_buffer(512)
-    if not hasattr(ctypes, "windll"):  # 非 Windows 直接用原路径
+    if not hasattr(ctypes, "windll"):  # Non-Windows environments use the original path directly
         return path
     ctypes.windll.kernel32.GetShortPathNameW(path, buf, 512)
     return buf.value or path
 
 
 def _already_done(pose_data):
-    """检查是否已有 court 字段（取第一个非空帧判断，None 不算）。"""
+    """Checks whether the 'court' field already exists by validating the first non-empty frame entry."""
     for entry in (pose_data if isinstance(pose_data, list) else pose_data.values()):
         if entry and entry.get("court") is not None:
             return True
@@ -36,18 +40,18 @@ def process_clip(clip_dir, court_model, force=False):
     video_path = os.path.join(clip_dir, "raw_clip.mp4")
 
     if not os.path.exists(pose_path) or not os.path.exists(video_path):
-        return "缺少文件"
+        return "Missing files"
 
     with open(pose_path, "r", encoding="utf-8") as f:
         pose_data = json.load(f)
 
     if not force and _already_done(pose_data):
-        return "已跳过"
+        return "Skipped"
 
     short_path = get_short_path(video_path)
     cap = cv2.VideoCapture(short_path)
     if not cap.isOpened():
-        return "视频打开失败"
+        return "Failed to open video"
 
     is_list = isinstance(pose_data, list)
     frame_idx = 0
@@ -62,12 +66,12 @@ def process_clip(clip_dir, court_model, force=False):
         if results and results[0].keypoints is not None:
             kps = results[0].keypoints
             if kps.xy is not None and len(kps.xy) > 0:
-                xy = kps.xy[0].cpu().numpy()      # (14, 2)
+                xy = kps.xy[0].cpu().numpy()      # Shape: (14, 2)
                 conf = kps.conf[0].cpu().numpy() if kps.conf is not None else np.ones(len(xy))
                 for i in range(len(xy)):
                     kps_out.append([float(xy[i, 0]), float(xy[i, 1]), float(conf[i])])
 
-        # 补齐到 14 点
+        # Fill up to 14 points if any are missing
         while len(kps_out) < 14:
             kps_out.append([0.0, 0.0, 0.0])
 
@@ -90,35 +94,35 @@ def process_clip(clip_dir, court_model, force=False):
     with open(pose_path, "w", encoding="utf-8") as f:
         json.dump(pose_data, f, ensure_ascii=False)
 
-    return f"完成 {frame_idx} 帧"
+    return f"Completed {frame_idx} frames"
 
 
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--data_root", default=os.path.join(_PROJECT_DIR, "data", "rallies_annotated"))
     parser.add_argument("--model", default=os.path.join(_PROJECT_DIR, "models", "court", "best.pt"))
-    parser.add_argument("--force", action="store_true", help="强制重跑已处理的 rally")
+    parser.add_argument("--force", action="store_true", help="Force re-running already processed rallies")
     args = parser.parse_args()
 
-    print(f"加载球场模型: {args.model}")
+    print(f"Loading court model: {args.model}")
     court_model = YOLO(args.model)
 
     clips = sorted(d for d in os.listdir(args.data_root)
                    if os.path.isdir(os.path.join(args.data_root, d)))
 
     done = skipped = failed = 0
-    for clip_name in tqdm(clips, desc="补充球场关键点"):
+    for clip_name in tqdm(clips, desc="Complementing court keypoints"):
         clip_dir = os.path.join(args.data_root, clip_name)
         result = process_clip(clip_dir, court_model, force=args.force)
-        if result == "已跳过":
+        if result == "Skipped":
             skipped += 1
-        elif result.startswith("完成"):
+        elif result.startswith("Completed"):
             done += 1
         else:
             failed += 1
-            tqdm.write(f"  [失败] {clip_name}: {result}")
+            tqdm.write(f"  [Failed] {clip_name}: {result}")
 
-    print(f"\n完成: {done} 个已处理，{skipped} 个已跳过，{failed} 个失败")
+    print(f"\nExecution Summary: {done} processed, {skipped} skipped, {failed} failed")
 
 
 if __name__ == "__main__":

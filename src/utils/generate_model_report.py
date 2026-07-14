@@ -1,14 +1,15 @@
 """
-读取 models/action/ 下所有训练产出，生成综合报告（包含曲线图 + 指标表）
+Reads all training outputs under models/action/ and generates a comprehensive
+report (including training curves + a metrics table).
 
-输出：
+Outputs:
   models/report/
-  ├── report.md              # 综合报告文档
-  ├── curves_loss.png        # 损失曲线对比
-  ├── curves_acc.png         # 准确率曲线对比
-  ├── curves_recall.png      # 召回率曲线对比
-  ├── confusion_*.png        # 各模型混淆矩阵
-  └── confusion_legend.png   # 混淆矩阵图例
+  ├── report.md              # Comprehensive report document
+  ├── curves_loss.png        # Loss curve comparison
+  ├── curves_acc.png         # Accuracy curve comparison
+  ├── curves_recall.png      # Recall curve comparison
+  ├── confusion_*.png        # Per-model confusion matrices
+  └── confusion_legend.png   # Confusion matrix legend
 """
 
 import os, sys, csv, json
@@ -25,7 +26,7 @@ MODELS_DIR = Path(__file__).resolve().parents[2] / "models" / "action"
 
 os.makedirs(REPORT_DIR, exist_ok=True)
 
-# ── 颜色方案 ──────────────────────────────────────────────────────────────────
+# ── Color scheme ──────────────────────────────────────────────────────────────────
 CAT_COLORS = {
     "main":       "#1f77b4",
     "hp_embed96": "#ff7f0e", "hp_embed256": "#ff7f0e",
@@ -42,7 +43,7 @@ ACTION_NAMES = ["idle", "forehand", "backhand", "serve", "move"]
 
 
 def parse_csv(csv_path):
-    """读取 train_log.csv，返回 dict 列表"""
+    """Read train_log.csv and return a list of dicts"""
     rows = []
     with open(csv_path, 'r', encoding='utf-8') as f:
         reader = csv.DictReader(f)
@@ -53,20 +54,23 @@ def parse_csv(csv_path):
 
 def compute_confusion_matrix(pred_counts, gt_counts):
     """
-    从 pred_* / gt_* 统计构建 5x5 混淆矩阵
-    用每类的 pred 落在假设位置（近似），精确混淆需要逐样本，这里只能近似
-    返回 5x5 numpy array
+    Build a 5x5 confusion matrix from the pred_* / gt_* aggregate counts.
+    Since we only know the totals per class, predictions are allocated using
+    a uniform assumption based on the GT proportions (an approximation) —
+    an exact confusion matrix requires per-sample inference.
+    Returns a 5x5 numpy array.
     """
     cm = np.zeros((5, 5), dtype=int)
-    # pred_idle 对应 gt_idle
-    # 由于只知道 totals, 用均匀假设: 按 gt 比例分配 pred
+    # pred_idle corresponds to gt_idle
+    # Since only the totals are known, use a uniform assumption: allocate
+    # predictions in proportion to the GT distribution
     gt_total = sum(gt_counts)
     if gt_total == 0:
         return cm
     for i, (pred, gt) in enumerate(zip(pred_counts, gt_counts)):
         if gt > 0:
             cm[i, i] = min(pred, gt)
-            # 剩余 pred 按其他 gt 比例分配
+            # Allocate the remaining predictions proportionally across the other GT classes
             remaining_pred = pred - cm[i, i]
             if remaining_pred > 0:
                 other_gt = [g for j, g in enumerate(gt_counts) if j != i]
@@ -76,12 +80,12 @@ def compute_confusion_matrix(pred_counts, gt_counts):
                         if j != i and other_sum > 0:
                             alloc = int(remaining_pred * g / other_sum)
                             cm[i, j] += alloc
-    # 调整使每类 pred 总和不超
+    # Adjust so the per-class prediction total does not exceed the actual total
     return cm
 
 
 def plot_curves(all_data, report_dir):
-    """绘制损失、准确率、召回率曲线"""
+    """Plot the loss, accuracy, and recall curves"""
 
     def _plot(ax, data_list, y_key, title, ylabel, filename, colors_dict):
         for config_name, ts_name, rows in data_list:
@@ -96,9 +100,9 @@ def plot_curves(all_data, report_dir):
         ax.legend(fontsize=6, loc='best', ncol=2)
         ax.grid(True, alpha=0.3)
 
-    # 筛选已完成的模型（有 best.pth）
+    # Filter to fully completed models (i.e. those with best.pth)
     completed = []
-    skipped_configs = {"main"}  # main 只取 195300
+    skipped_configs = {"main"}  # for "main", only keep run 195300
 
     for config_name, ts_name, rows in all_data:
         ts_dir = MODELS_DIR / config_name / ts_name
@@ -109,16 +113,16 @@ def plot_curves(all_data, report_dir):
         if not rows:
             continue
         if config_name == "cmp_resnet_backbone":
-            # 取最后一个
+            # Keep only the latest run
             if ts_name != "20260427_184225":
                 continue
         completed.append((config_name, ts_name, rows))
 
-    # 整理按 category 分组绘图
+    # Group by category for plotting
     def group_by_cat(data_list):
         groups = {}
         for c, t, r in data_list:
-            # 提取前缀
+            # Determine category prefix
             if c.startswith("hp_"):
                 cat = "hyperparams"
             elif c.startswith("abl_"):
@@ -132,7 +136,7 @@ def plot_curves(all_data, report_dir):
 
     groups = group_by_cat(completed)
 
-    # 每个 category 绘制一套图
+    # Plot one figure set per category
     fig_loss, axes_loss = plt.subplots(2, 2, figsize=(16, 10))
     fig_acc, axes_acc = plt.subplots(2, 2, figsize=(16, 10))
     fig_recall, axes_recall = plt.subplots(2, 2, figsize=(16, 10))
@@ -152,20 +156,21 @@ def plot_curves(all_data, report_dir):
 
         data = groups.get(cat, [])
 
-        # 损失曲线
+        # Loss curve
         _plot(ax_l, data, 'train_loss', f"{cat_labels.get(cat, cat)} — Train Loss",
               "Train Loss", None, CAT_COLORS)
 
-        # 准确率曲线
+        # Accuracy curve
         _plot(ax_a, data, 'test_acc', f"{cat_labels.get(cat, cat)} — Test Accuracy",
               "Test Accuracy (%)", None, CAT_COLORS)
 
-        # 召回率曲线 (kf_recall 是关键帧召回)
+        # Recall curve (kf_recall is the keyframe recall)
         _plot(ax_r, data, 'test_acc', f"{cat_labels.get(cat, cat)} — Test Accuracy",
               "Test Accuracy (%)", None, CAT_COLORS)
 
-        # 如果有关键帧召回率也画
-        # 实际上 test_acc 画了，我们改为画所有模型合并在一个图
+        # Keyframe recall would be plotted here too if available;
+        # for now test_acc is plotted, and we instead produce a combined
+        # comparison across all models below
 
     fig_loss.tight_layout()
     fig_loss.savefig(report_dir / "curves_loss.png", dpi=150, bbox_inches='tight')
@@ -175,7 +180,7 @@ def plot_curves(all_data, report_dir):
     fig_acc.savefig(report_dir / "curves_acc.png", dpi=150, bbox_inches='tight')
     plt.close(fig_acc)
 
-    # 单独画一张总体对比（Top-5 模型）
+    # Plot a separate overall comparison (Top 5 models)
     top5 = sorted(completed, key=lambda x: max(float(r['test_acc']) for r in x[2]), reverse=True)[:5]
     fig_top, axes = plt.subplots(1, 3, figsize=(18, 5))
 
@@ -206,7 +211,7 @@ def plot_curves(all_data, report_dir):
     fig_top.savefig(report_dir / "curves_top5.png", dpi=150, bbox_inches='tight')
     plt.close(fig_top)
 
-    # 各模型单独混淆矩阵
+    # Per-model individual confusion matrices
     for c, t, rows in completed:
         best_row = max(rows, key=lambda r: float(r['best_metric']))
         pred = [int(best_row[f'pred_{a}']) for a in ['idle','fh','bh','serve','move']]
@@ -248,7 +253,7 @@ def plot_curves(all_data, report_dir):
 
 
 def collect_all_data():
-    """收集所有模型数据"""
+    """Collect data for all models"""
     all_data = []
     for config_name in sorted(os.listdir(MODELS_DIR)):
         config_dir = MODELS_DIR / config_name
@@ -264,16 +269,16 @@ def collect_all_data():
 
 
 def gen_confusion_matrix_html(pred_counts, gt_counts):
-    """生成近似混淆矩阵 HTML 表格"""
+    """Generate an approximate confusion matrix as a Markdown table"""
     lines = []
     lines.append("| | idle | forehand | backhand | serve | move |")
     lines.append("|---|---|---|---|---|---|")
     for i, aname in enumerate(ACTION_NAMES):
         cells = [f"**{aname}** (GT={gt_counts[i]})"]
-        # 简化：直接填 pred counts 做行
-        # 这里只做展示，真实混淆需要逐样本
+        # Simplified: fill in the raw prediction counts as the row
+        # This is display-only; an exact confusion matrix requires per-sample data
         cells.append(str(pred_counts[i]))
-        # 其他列留占位
+        # Remaining columns are left as placeholders
         for _ in range(4):
             cells.append("-")
         lines.append("| " + " | ".join(cells) + " |")
@@ -281,44 +286,44 @@ def gen_confusion_matrix_html(pred_counts, gt_counts):
 
 
 def generate_report(all_data, report_dir):
-    """生成综合报告 MD"""
+    """Generate the comprehensive Markdown report"""
 
     lines = []
-    lines.append("# MSTFormer 模型训练综合报告")
+    lines.append("# MSTFormer Model Training — Comprehensive Report")
     lines.append("")
-    lines.append(f"**生成日期：** 2026-04-28")
-    lines.append(f"**数据集：** rallies_train (152 训练 / 40 测试切片, seq_len=120)")
-    lines.append(f"**类别：** idle / forehand / backhand / serve / move（5 类）")
+    lines.append(f"**Generated on:** 2026-04-28")
+    lines.append(f"**Dataset:** rallies_train (152 training / 40 test clips, seq_len=120)")
+    lines.append(f"**Classes:** idle / forehand / backhand / serve / move (5 classes)")
     lines.append("")
 
-    # ═══ 概述 ═══
-    lines.append("## 1. 总体概览")
+    # ═══ Overview ═══
+    lines.append("## 1. Overall Summary")
     lines.append("")
-    lines.append("| 配置 | 类别 | 最佳 Epoch | 测试准确率 | 训练损失 | 关键帧 Precision | 关键帧 Recall | 关键帧 F1 | 训练轮数 | best.pth | final.pth |")
+    lines.append("| Config | Category | Best Epoch | Test Accuracy | Train Loss | Keyframe Precision | Keyframe Recall | Keyframe F1 | Epochs Trained | best.pth | final.pth |")
     lines.append("|---|---|---:|---:|---:|---:|---:|---:|---:|:---:|:---:|")
 
-    # 分类排序
+    # Category ordering
     cat_order = {
-        "main": "主模型",
-        "hp_embed96": "超参", "hp_embed256": "超参", "hp_depth4": "超参",
-        "hp_depth12": "超参", "hp_vtokens8": "超参", "hp_vtokens32": "超参",
-        "abl_no_pose": "消融", "abl_no_crops": "消融", "abl_no_visual": "消融",
-        "abl_global_only": "消融",
-        "cmp_ce_loss": "组件", "cmp_focal_loss": "组件", "cmp_no_merge": "组件",
-        "cmp_resnet_backbone": "组件", "cmp_frozen_backbone": "组件",
+        "main": "Main Model",
+        "hp_embed96": "Hyperparameters", "hp_embed256": "Hyperparameters", "hp_depth4": "Hyperparameters",
+        "hp_depth12": "Hyperparameters", "hp_vtokens8": "Hyperparameters", "hp_vtokens32": "Hyperparameters",
+        "abl_no_pose": "Ablation", "abl_no_crops": "Ablation", "abl_no_visual": "Ablation",
+        "abl_global_only": "Ablation",
+        "cmp_ce_loss": "Components", "cmp_focal_loss": "Components", "cmp_no_merge": "Components",
+        "cmp_resnet_backbone": "Components", "cmp_frozen_backbone": "Components",
     }
 
     completed = [(c, t, r) for c, t, r in all_data
                   if (MODELS_DIR / c / t / "best.pth").exists() and r]
 
-    # main 去重
+    # Deduplicate "main" runs
     completed = [(c, t, r) for c, t, r in completed
                   if not (c == "main" and t == "20260424_194625")]
 
     for c, t, rows in sorted(completed, key=lambda x: (cat_order.get(x[0], "ZZZ"), x[0], x[1])):
         best_row = max(rows, key=lambda r: float(r['best_metric']))
-        has_best = "" if (MODELS_DIR / c / t / "best.pth").exists() else ""
-        has_final = "" if (MODELS_DIR / c / t / "final.pth").exists() else ""
+        has_best = "✓" if (MODELS_DIR / c / t / "best.pth").exists() else ""
+        has_final = "✓" if (MODELS_DIR / c / t / "final.pth").exists() else ""
         total_ep = len(rows)
         lines.append(
             f"| {c}/{t[:8]} | {cat_order.get(c, '-')} "
@@ -330,17 +335,18 @@ def generate_report(all_data, report_dir):
         )
 
     lines.append("")
-    lines.append("> **注：** R² 为回归指标，不适用于多分类任务。分类任务的标准评估指标为准确率 (Accuracy)、"
-                 "精确率 (Precision)、召回率 (Recall)、F1-Score 和混淆矩阵 (Confusion Matrix)。")
+    lines.append("> **Note:** R² is a regression metric and is not applicable to multi-class classification tasks. "
+                 "The standard evaluation metrics for classification tasks are Accuracy, "
+                 "Precision, Recall, F1-Score, and the Confusion Matrix.")
     lines.append("")
 
-    # ═══ 混淆矩阵 ═══
-    lines.append("## 2. 混淆矩阵")
+    # ═══ Confusion matrices ═══
+    lines.append("## 2. Confusion Matrices")
     lines.append("")
-    lines.append("以下混淆矩阵基于各模型最佳 epoch 的 pred_*/gt_* 统计生成。")
-    lines.append("图中行 = 真实类别，列 = 预测类别，对角线 = 正确分类数。")
+    lines.append("The confusion matrices below are generated from the pred_*/gt_* aggregate counts at each model's best epoch.")
+    lines.append("Rows = ground-truth class, columns = predicted class, diagonal = number of correct classifications.")
     lines.append("")
-    lines.append("### 主模型 (main/20260424_195300)")
+    lines.append("### Main Model (main/20260424_195300)")
     lines.append("")
 
     main_rows = [r for c, t, r in completed if c == "main" and t == "20260424_195300"]
@@ -348,19 +354,19 @@ def generate_report(all_data, report_dir):
         best_row = max(main_rows[0], key=lambda r: float(r['best_metric']))
         pred = [int(best_row[f'pred_{a}']) for a in ['idle','fh','bh','serve','move']]
         gt = [int(best_row[f'gt_{a}']) for a in ['idle','fh','bh','serve','move']]
-        lines.append(f"测试样本数: {sum(gt)} | 准确率: {best_row['test_acc']}%")
+        lines.append(f"Test samples: {sum(gt)} | Accuracy: {best_row['test_acc']}%")
         lines.append("")
-        lines.append("| 类别 (GT) | idle | forehand | backhand | serve | move | 总数 |")
+        lines.append("| Class (GT) | idle | forehand | backhand | serve | move | Total |")
         lines.append("|---|---|---|---|---|---|---|")
         for i, aname in enumerate(ACTION_NAMES):
             total_gt = gt[i]
-            # 按预测分布比例分配
+            # Allocate proportionally to the predicted distribution
             pred_total = sum(pred)
             if pred_total > 0:
                 dist = [int(p * total_gt / pred_total) for p in pred]
             else:
                 dist = [0] * 5
-            # 对角线优先
+            # Prioritize the diagonal (correct) entry
             correct = min(pred[i], total_gt)
             row_cells = [f"**{aname}**"]
             for j in range(5):
@@ -372,30 +378,30 @@ def generate_report(all_data, report_dir):
             lines.append("| " + " | ".join(row_cells) + " |")
 
     lines.append("")
-    lines.append("混淆矩阵可视化请参见 `confusion_*.png` 文件。")
+    lines.append("See the `confusion_*.png` files for confusion matrix visualizations.")
     lines.append("")
 
-    # ═══ 各模型指标分解 ═══
-    lines.append("## 3. 各模型详细指标")
+    # ═══ Per-model metric breakdown ═══
+    lines.append("## 3. Detailed Per-Model Metrics")
     lines.append("")
 
     MODEL_DESC = {
-        "main": "主配置 (embed_dim=128, depth=8, Focal Loss, merge_visual_tokens=true, 全部100轮)",
-        "hp_embed96": "embed_dim=96 (缩小嵌入维度)",
-        "hp_embed256": "embed_dim=256 (扩大嵌入维度)",
-        "hp_depth4": "Transformer depth=4 (减少层数)",
-        "hp_depth12": "Transformer depth=12 (增加层数)",
-        "hp_vtokens8": "visual_tokens=8 (减少视觉 token)",
-        "hp_vtokens32": "visual_tokens=32 (增加视觉 token)",
-        "abl_no_pose": "消融：去掉姿态向量 (use_pose=false)",
-        "abl_no_crops": "消融：去掉裁剪图 (use_player_crops=false)",
-        "abl_no_visual": "消融：去掉所有视觉流 (纯姿态，无视觉 token)",
-        "abl_global_only": "消融：仅全帧视觉 (去掉裁剪图和姿态)",
-        "cmp_ce_loss": "组件：Cross Entropy Loss (对比 Focal Loss)",
-        "cmp_focal_loss": "组件：Focal Loss (基准)",
-        "cmp_no_merge": "组件：独立三路 token 不合并 (merge_visual_tokens=false)",
-        "cmp_resnet_backbone": "组件：ResNet18 骨干 (替代 YOLO11, ImageNet 预训练)",
-        "cmp_frozen_backbone": "组件：冻结骨干 (unfreeze_backbone=false)",
+        "main": "Main configuration (embed_dim=128, depth=8, Focal Loss, merge_visual_tokens=true, full 100 epochs)",
+        "hp_embed96": "embed_dim=96 (smaller embedding dimension)",
+        "hp_embed256": "embed_dim=256 (larger embedding dimension)",
+        "hp_depth4": "Transformer depth=4 (fewer layers)",
+        "hp_depth12": "Transformer depth=12 (more layers)",
+        "hp_vtokens8": "visual_tokens=8 (fewer visual tokens)",
+        "hp_vtokens32": "visual_tokens=32 (more visual tokens)",
+        "abl_no_pose": "Ablation: remove the pose vector (use_pose=false)",
+        "abl_no_crops": "Ablation: remove crop images (use_player_crops=false)",
+        "abl_no_visual": "Ablation: remove all visual streams (pose only, no visual tokens)",
+        "abl_global_only": "Ablation: full-frame visual only (remove crops and pose)",
+        "cmp_ce_loss": "Component: Cross Entropy Loss (compared against Focal Loss)",
+        "cmp_focal_loss": "Component: Focal Loss (baseline)",
+        "cmp_no_merge": "Component: independent three-stream tokens, not merged (merge_visual_tokens=false)",
+        "cmp_resnet_backbone": "Component: ResNet18 backbone (replacing YOLO11, ImageNet pretrained)",
+        "cmp_frozen_backbone": "Component: frozen backbone (unfreeze_backbone=false)",
     }
 
     for c, t, rows in sorted(completed, key=lambda x: -max(float(r['test_acc']) for r in x[2])):
@@ -407,75 +413,83 @@ def generate_report(all_data, report_dir):
             lines.append(f"> {desc}")
             lines.append("")
 
-        lines.append(f"- **最佳 Epoch:** {best_row['epoch']}")
-        lines.append(f"- **测试准确率 (test_acc):** {best_row['test_acc']}%")
-        lines.append(f"- **训练损失 (train_loss):** {best_row['train_loss']}")
-        lines.append(f"- **训练准确率 (train_acc):** {best_row['train_acc']}%")
-        lines.append(f"- **关键帧 Precision:** {best_row['kf_precision']}%")
-        lines.append(f"- **关键帧 Recall:** {best_row['kf_recall']}%")
-        lines.append(f"- **关键帧 F1:** {best_row['kf_f1']}%")
+        lines.append(f"- **Best Epoch:** {best_row['epoch']}")
+        lines.append(f"- **Test Accuracy (test_acc):** {best_row['test_acc']}%")
+        lines.append(f"- **Train Loss (train_loss):** {best_row['train_loss']}")
+        lines.append(f"- **Train Accuracy (train_acc):** {best_row['train_acc']}%")
+        lines.append(f"- **Keyframe Precision:** {best_row['kf_precision']}%")
+        lines.append(f"- **Keyframe Recall:** {best_row['kf_recall']}%")
+        lines.append(f"- **Keyframe F1:** {best_row['kf_f1']}%")
         lines.append(f"- **best_metric:** {best_row['best_metric']}")
 
         pred = [int(best_row[f'pred_{a}']) for a in ['idle','fh','bh','serve','move']]
         gt = [int(best_row[f'gt_{a}']) for a in ['idle','fh','bh','serve','move']]
-        lines.append(f"- **预测分布:** idle={pred[0]}, FH={pred[1]}, BH={pred[2]}, serve={pred[3]}, move={pred[4]}")
-        lines.append(f"- **真实分布:** idle={gt[0]}, FH={gt[1]}, BH={gt[2]}, serve={gt[3]}, move={gt[4]}")
+        lines.append(f"- **Prediction distribution:** idle={pred[0]}, FH={pred[1]}, BH={pred[2]}, serve={pred[3]}, move={pred[4]}")
+        lines.append(f"- **Ground-truth distribution:** idle={gt[0]}, FH={gt[1]}, BH={gt[2]}, serve={gt[3]}, move={gt[4]}")
 
-        # 每类召回率近似
-        lines.append("- **每类近似召回率:**")
+        # Approximate per-class recall
+        lines.append("- **Approximate per-class recall:**")
         for i, aname in enumerate(ACTION_NAMES):
             if gt[i] > 0:
                 recall_approx = min(pred[i], gt[i]) / gt[i] * 100
                 lines.append(f"  - {aname}: {recall_approx:.1f}%")
 
         lines.append("")
-        lines.append(f"![混淆矩阵](confusion_{c}_{t[:8]}.png)")
+        lines.append(f"![Confusion Matrix](confusion_{c}_{t[:8]}.png)")
         lines.append("")
 
-    # ═══ 曲线说明 ═══
-    lines.append("## 4. 训练曲线")
+    # ═══ Curve explanations ═══
+    lines.append("## 4. Training Curves")
     lines.append("")
-    lines.append("### 4.1 按类别分组曲线")
+    lines.append("### 4.1 Curves Grouped by Category")
     lines.append("")
-    lines.append("![损失曲线](curves_loss.png)")
+    lines.append("![Loss Curves](curves_loss.png)")
     lines.append("")
-    lines.append("![准确率曲线](curves_acc.png)")
+    lines.append("![Accuracy Curves](curves_acc.png)")
     lines.append("")
-    lines.append("### 4.2 Top-5 模型对比")
+    lines.append("### 4.2 Top-5 Model Comparison")
     lines.append("")
-    lines.append("![Top5 对比](curves_top5.png)")
-    lines.append("")
-
-    # ═══ 结论 ═══
-    lines.append("## 5. 初步结论")
+    lines.append("![Top5 Comparison](curves_top5.png)")
     lines.append("")
 
-    # 找 top 3
+    # ═══ Conclusions ═══
+    lines.append("## 5. Preliminary Conclusions")
+    lines.append("")
+
+    # Find the top 3
     top3 = sorted(completed, key=lambda x: max(float(r['test_acc']) for r in x[2]), reverse=True)[:3]
-    lines.append("### 准确率排名 Top 3")
+    lines.append("### Top 3 by Accuracy")
     lines.append("")
     for rank, (c, t, rows) in enumerate(top3, 1):
         best_row = max(rows, key=lambda r: float(r['best_metric']))
         lines.append(f"{rank}. **{c}**: {best_row['test_acc']}% (Epoch {best_row['epoch']})")
     lines.append("")
 
-    lines.append("### 关键观察")
+    lines.append("### Key Observations")
     lines.append("")
-    lines.append("1. **超参影响：** embed_dim=256 和 vtokens=8 表现最好，说明缩小 visual_tokens 但增大嵌入维度有益")
-    lines.append("2. **消融：** `abl_no_pose` (84.70%) 去掉姿态后准确率反而上升，说明当前姿态特征可能引入噪声")
-    lines.append("3. **损失函数：** CE Loss (86.22%) 优于 Focal Loss (84.19%)，在本数据集上 CE 更合适")
-    lines.append("4. **骨干选择：** YOLO11 骨干 (85%+) 远优于冻结骨干 (37.38%) 和 ResNet18 (79.72%)")
-    lines.append("5. **visual_tokens 合并：** 合并方案 (84.19%) 优于不合并 (71.48%)，说明 token 压缩有效")
-    lines.append("6. **`abl_no_visual` (56.58%)：** 去掉所有视觉后纯姿态表现很差，视觉信息不可或缺")
+    lines.append("1. **Hyperparameter effects:** embed_dim=256 and vtokens=8 perform best, suggesting that shrinking "
+                 "visual_tokens while increasing the embedding dimension is beneficial")
+    lines.append("2. **Ablation:** `abl_no_pose` (84.70%) actually shows *higher* accuracy after removing the pose "
+                 "features, suggesting the current pose features may be introducing noise")
+    lines.append("3. **Loss function:** CE Loss (86.22%) outperforms Focal Loss (84.19%), so CE is more suitable "
+                 "for this dataset")
+    lines.append("4. **Backbone choice:** the YOLO11 backbone (85%+) far outperforms the frozen backbone (37.38%) "
+                 "and ResNet18 (79.72%)")
+    lines.append("5. **Visual token merging:** the merged scheme (84.19%) outperforms the unmerged scheme (71.48%), "
+                 "showing that token compression is effective")
+    lines.append("6. **`abl_no_visual` (56.58%):** with all visual streams removed, pose-only performance is very "
+                 "poor — visual information is indispensable")
     lines.append("")
-    lines.append("### 注意")
+    lines.append("### Caveats")
     lines.append("")
-    lines.append("- 混淆矩阵为近似计算（基于聚合的 pred/gt 计数），精确混淆矩阵需要逐样本推理")
-    lines.append("- R² 不适用于分类任务，未计算")
-    lines.append("- `main/20260424_194625` 仅 1 epoch 为 smoke test，已排除")
-    lines.append("- `main/20260424_195300` 训练 44 轮后中断（无 final.pth），但 best.pth 有效")
-    lines.append("- `hp_depth4` 训练 69 轮（无 final.pth），结果有效")
-    lines.append("- `cmp_resnet_backbone` 使用 train_ratio=0.6（其他为 0.8），测试样本更大，对比时需注意")
+    lines.append("- Confusion matrices are computed approximately (based on aggregated pred/gt counts); an exact "
+                 "confusion matrix requires per-sample inference")
+    lines.append("- R² is not applicable to classification tasks and was not computed")
+    lines.append("- `main/20260424_194625` was only trained for 1 epoch as a smoke test and has been excluded")
+    lines.append("- `main/20260424_195300` was interrupted after 44 epochs (no final.pth), but best.pth is valid")
+    lines.append("- `hp_depth4` was trained for 69 epochs (no final.pth); the results are valid")
+    lines.append("- `cmp_resnet_backbone` uses train_ratio=0.6 (others use 0.8), giving it a larger test set — "
+                 "keep this in mind when comparing")
     lines.append("")
 
     report_path = report_dir / "report.md"

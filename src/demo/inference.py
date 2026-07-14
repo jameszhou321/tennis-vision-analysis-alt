@@ -1,9 +1,9 @@
-"""inference.py — 推理线程：person YOLO + pose YOLO 实时检测，送入 MSTFormer"""
+"""inference.py — Inference thread: real-time person YOLO + pose YOLO detection fed into MSTFormer."""
 import os
 import sys
 import json
 
-# Windows 下 torch DLL 需要提前注册搜索路径，否则直接 import app.py 时会失败
+# On Windows, the torch DLL search path needs to be pre-registered, otherwise importing app.py directly will fail
 if sys.platform == "win32":
     import importlib.util
     _torch_spec = importlib.util.find_spec("torch")
@@ -32,17 +32,17 @@ from config import load_config  # noqa
 POSE_DIM = 125
 CROP_SIZE = 320
 
-# COCO 17 关键点骨架连接
+# COCO 17 keypoint skeletal connections
 _SKELETON = [
     (0,1),(0,2),(1,3),(2,4),(5,6),(5,7),(7,9),(6,8),(8,10),
     (5,11),(6,12),(11,12),(11,13),(13,15),(12,14),(14,16)
 ]
 _KP_COLOR  = (0, 255, 128)
-_BOX_COLORS = [(0, 200, 255), (255, 160, 0)]   # p1=青, p2=橙
+_BOX_COLORS = [(0, 200, 255), (255, 160, 0)]   # p1=Cyan, p2=Orange
 
 
 def _draw_person(frame, box, kpts, color):
-    """在 frame 上绘制 bbox + 骨架关键点。"""
+    """Draws the bounding box and skeletal keypoints on the frame."""
     x1, y1, x2, y2 = int(box[0]), int(box[1]), int(box[2]), int(box[3])
     cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
     if kpts is None or len(kpts) < 17:
@@ -96,7 +96,7 @@ class InferenceThread(QThread):
         anno_path = os.path.join(self.rally_dir, "annotations.json")
         anno_json = json.load(open(anno_path, encoding="utf-8")) if os.path.exists(anno_path) else []
 
-        # 读视频
+        # Read video
         short = _get_short_path(os.path.join(self.rally_dir, "raw_clip.mp4"))
         cap   = cv2.VideoCapture(short)
         raw_fps = cap.get(cv2.CAP_PROP_FPS)
@@ -114,7 +114,7 @@ class InferenceThread(QThread):
         total_frames = len(raw_bgr)
 
         if total_frames == 0:
-            self.error.emit("视频读取失败或帧数为 0")
+            self.error.emit("Video reading failed or total frame count is 0")
             return
 
         self.progress.emit(5)
@@ -131,13 +131,13 @@ class InferenceThread(QThread):
         from ultralytics import YOLO
         total_frames = len(raw_bgr)
 
-        # 加载 YOLO 模型
+        # Load YOLO models
         person_yolo = YOLO(self.person_model_path)
         pose_yolo   = YOLO(self.pose_model_path) if use_pose else None
 
         base_win = round(vid_w / 6.4)
 
-        # ── 第一遍：person YOLO 检测，记录每帧两个运动员的 bbox ──────────────
+        # ── Pass 1: person YOLO detection, recording player bboxes for each frame ──
         dets = []   # list of [slot0: (cx,cy,win,box)|None, slot1: ...]
         for gi, frm in enumerate(raw_bgr):
             frame_dets = [None, None]
@@ -162,7 +162,7 @@ class InferenceThread(QThread):
             if gi % 30 == 0:
                 self.progress.emit(5 + int(gi / total_frames * 20))
 
-        # 线性插值补全缺失帧
+        # Linear interpolation to fill missing frames
         for slot in range(2):
             known = [(i, dets[i][slot]) for i in range(len(dets)) if dets[i][slot] is not None]
             if not known:
@@ -181,16 +181,16 @@ class InferenceThread(QThread):
                     cx = int(prev[1][0] + t*(nxt[1][0]-prev[1][0]))
                     cy = int(prev[1][1] + t*(nxt[1][1]-prev[1][1]))
                     wn = int(prev[1][2] + t*(nxt[1][2]-prev[1][2]))
-                    # 插值 box
+                    # Interpolated box
                     pb, nb = prev[1][3], nxt[1][3]
                     box = pb + t*(nb - pb)
                     dets[i][slot] = (cx, cy, wn, box)
 
         self.progress.emit(25)
 
-        # ── 第二遍：pose YOLO + 构建 pose 向量 + 裁剪图 + 标注帧 ─────────────
+        # ── Pass 2: pose YOLO + build pose vectors + player crops + annotated frames ──
         all_pose      = np.zeros((total_frames, POSE_DIM), dtype=np.float32)
-        annotated_rgb = []   # 每帧带标注的 RGB ndarray
+        annotated_rgb = []   # RGB ndarray with annotations per frame
         crops_p1      = []   # (CROP_SIZE, CROP_SIZE, 3) uint8 RGB
         crops_p2      = []
 
@@ -200,7 +200,7 @@ class InferenceThread(QThread):
             ann = frm.copy()
             kpts_near = None
 
-            # 对两个运动员分别跑 pose YOLO
+            # Run pose YOLO on both players separately
             for slot in range(2):
                 det = dets[gi][slot]
                 if det is None:
@@ -211,14 +211,14 @@ class InferenceThread(QThread):
                 cx, cy, win, box = det
                 crop_bgr = _crop_fixed(frm, cx, cy, win, vid_h, vid_w)
 
-                # pose 推理
+                # Pose inference
                 kpts_raw = None
                 if pose_yolo is not None:
                     pose_res = pose_yolo(crop_bgr, verbose=False, conf=0.3, classes=[0])
                     if (pose_res[0].keypoints is not None and
                             len(pose_res[0].keypoints.data) > 0):
                         kp_data = pose_res[0].keypoints.data[0].cpu().numpy()  # (17,3)
-                        # 坐标从裁剪图空间映射回原图空间
+                        # Map coordinates from the cropped image space back to the original image space
                         half = win // 2
                         ox, oy = cx - half, cy - half
                         kpts_raw = []
@@ -227,20 +227,20 @@ class InferenceThread(QThread):
                             ky = kp[1] / CROP_SIZE * win + oy
                             kpts_raw.append([kx, ky, float(kp[2])])
 
-                # 绘制标注
+                # Draw annotations
                 _draw_person(ann, box, kpts_raw, _BOX_COLORS[slot])
 
-                # 裁剪图（RGB）
+                # Cropped images (RGB)
                 crop_rgb = cv2.cvtColor(crop_bgr, cv2.COLOR_BGR2RGB)
                 if slot == 0:
                     crops_p1.append(crop_rgb)
-                    # near_player 用于 pose 向量
+                    # near_player used for the pose vector
                     if kpts_raw is not None:
                         kpts_near = kpts_raw
                 else:
                     crops_p2.append(crop_rgb)
 
-            # 构建 pose 向量（用 near_player，即 slot=0）
+            # Build pose vector (using near_player, i.e., slot=0)
             player_dict = None
             if kpts_near is not None and dets[gi][0] is not None:
                 bx = dets[gi][0][3]
@@ -262,13 +262,13 @@ class InferenceThread(QThread):
 
         self.progress.emit(65)
 
-        # ── 构建 tensor ───────────────────────────────────────────────────────
+        # ── Construct Tensors ──────────────────────────────────────────────────
         pose_t   = torch.from_numpy(all_pose).unsqueeze(0)  # (1,T,125)
         packed_t = torch.zeros(1, total_frames, 3, CROP_SIZE, CROP_SIZE*3, dtype=torch.uint8)
 
         use_visual = cfg.get("use_visual", True)
         if use_visual:
-            # 全帧
+            # Full frame
             frames_dir = os.path.join(self.rally_dir, "frames")
             has_frames = os.path.isdir(frames_dir)
             for gi, frm in enumerate(raw_bgr):
@@ -281,7 +281,7 @@ class InferenceThread(QThread):
                             frm = img
                 rgb = _resize_uint8(frm, CROP_SIZE, CROP_SIZE)
                 packed_t[0, gi, :, :, :CROP_SIZE] = torch.from_numpy(rgb.transpose(2,0,1))
-            # 裁剪图
+            # Cropped images
             if cfg.get("use_player_crops", True):
                 for gi in range(total_frames):
                     if gi < len(crops_p1):
@@ -357,7 +357,7 @@ def _build_gt_labels(anno_json, total_frames, fps):
 
 def _emit_result(thread, raw_bgr, all_pose, crops_p1, crops_p2,
                  annotated_rgb, anno_json, fps, cfg, device):
-    """构建 tensor、跑 MSTFormer、发射结果信号。"""
+    """Constructs tensors, runs MSTFormer inference, and emits result signals."""
     total_frames = len(raw_bgr)
     use_visual   = cfg.get("use_visual", True)
     num_classes  = cfg.get("num_classes", 5)
@@ -374,11 +374,11 @@ def _emit_result(thread, raw_bgr, all_pose, crops_p1, crops_p2,
 
     if use_visual:
         for gi in range(total_frames):
-            # 全帧
+            # Full frame
             frm_rgb = cv2.cvtColor(raw_bgr[gi], cv2.COLOR_BGR2RGB)
             packed_t[0, gi, :, :, :320] = _torch.from_numpy(
                 cv2.resize(frm_rgb, (320, 320)).transpose(2, 0, 1))
-            # 裁剪图
+            # Cropped images
             if gi < len(crops_p1):
                 packed_t[0, gi, :, :, 320:640] = _torch.from_numpy(crops_p1[gi].transpose(2, 0, 1))
             if gi < len(crops_p2):

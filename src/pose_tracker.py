@@ -1,6 +1,6 @@
-"""pose_tracker.py — 姿态追踪器（供 main.py 使用）
+"""pose_tracker.py — Pose Tracker (for use by main.py)
 
-功能：封装 YOLO 姿态估计，提供 PoseTracker 类接口，含 EMA 平滑和丢帧补偿
+Function: Encapsulates YOLO pose estimation, providing the PoseTracker class interface, inclusive of EMA smoothing and frame drop compensation.
 """
 import cv2
 import numpy as np
@@ -15,7 +15,8 @@ class PoseTracker:
 
     def process_and_smooth(self, crop_img, offset_x, offset_y, is_far, history_state, annotated_frame):
         """
-        进行模型推理、多维度打分(Y轴靠下优先+X轴惯性)、数据平滑处理并绘制关键点
+        Performs model inference, multi-dimensional scoring (Y-axis bottom priority + X-axis inertia), 
+        data smoothing, and keypoint rendering.
         """
         new_box, new_kpts = None, None
 
@@ -31,15 +32,15 @@ class PoseTracker:
                 roi_h, roi_w = crop_img.shape[:2]
 
                 # ==========================================
-                # 分离 X 轴与 Y 轴的判定逻辑
+                # Decoupled X-axis and Y-axis Decision Logic
                 # ==========================================
                 if history_state['box'] is not None:
-                    # 追踪模式：只继承 X 轴（左右移动）的惯性预期
+                    # Tracking Mode: Inherit only the inertia expectation of the X-axis (left/right movement)
                     prev_bx1, prev_by1, prev_bx2, prev_by2 = history_state['box']
                     expected_cx = ((prev_bx1 + prev_bx2) / 2.0) - offset_x
                     max_x_tolerance = roi_w * 0.25
                 else:
-                    # 开局模式：默认在球场中轴线寻找
+                    # Initialization Mode: Search along the court centerline by default
                     expected_cx = roi_w / 2.0
                     max_x_tolerance = roi_w * 0.6
 
@@ -49,22 +50,23 @@ class PoseTracker:
 
                     person_cx = (bx1 + bx2) / 2.0
 
-                    # 1. X 轴惯性得分 (防左右两侧的球童)
+                    # 1. X-axis Inertia Score (Prevents misdetecting ball kids on either side)
                     x_dist = abs(person_cx - expected_cx)
                     x_score = max(0, 1.0 - (x_dist / max_x_tolerance))
 
-                    # 2. Y 轴靠下优先得分 （防止误检后方看台观众）
-                    # by2 是人物边框的最底端（脚部）。脚越接近 ROI 的底部(roi_h)，y_score 越接近 1.0
+                    # 2. Y-axis Bottom Priority Score (Prevents misdetecting audience in the back stands)
+                    # by2 is the bottom edge of the person's bounding box (feet). 
+                    # The closer the feet are to the bottom of the ROI (roi_h), the closer y_score is to 1.0.
                     y_score = by2 / roi_h
 
                     # ==========================================
-                    # 定制化权重分配
+                    # Customized Weight Assignment
                     # ==========================================
                     if is_far:
-                        # 远端策略：50%看是否靠下，30%看左右追踪惯性，仅保留20%给YOLO置信度
+                        # Far end strategy: 50% on bottom proximity, 30% on tracking inertia, and 20% on YOLO confidence.
                         score = conf * 0.2 + y_score * 0.5 + x_score * 0.3
                     else:
-                        # 近端策略：近端特征清晰，50%看置信度，50%看左右追踪惯性
+                        # Near end strategy: Distinct features, 50% on confidence and 50% on tracking inertia.
                         score = conf * 0.5 + x_score * 0.5
 
                     if score > max_score:
@@ -86,7 +88,7 @@ class PoseTracker:
                             new_kpts.append([g_kx, g_ky, float(kconf)])
 
         # ==========================================
-        # 状态机更新与 EMA 消抖平滑
+        # State Machine Update and EMA Debounce Smoothing
         # ==========================================
         final_box, final_kpts = None, None
 
@@ -117,7 +119,7 @@ class PoseTracker:
                 history_state['kpts'] = None
 
         # ==========================================
-        # 渲染绘制
+        # Visual Rendering and Drawing
         # ==========================================
         if final_box is not None:
             cv2.rectangle(annotated_frame, (int(final_box[0]), int(final_box[1])),

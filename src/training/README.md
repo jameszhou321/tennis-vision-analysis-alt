@@ -1,22 +1,22 @@
-# training/ — 人员检测/分类模型训练
+# training/ — Person Detection/Classification Model Training
 
-训练「近端球员 / 远端球员」识别模型，并配套难例挖掘（Hard Negative Mining）。
+Trains the "near-side player / far-side player" identification model, along with accompanying hard negative mining.
 
-| 文件 | 作用 | 运行 |
+| File | Purpose | Run |
 | --- | --- | --- |
-| `train_person_detector.py` | 基于 `data/person_sorter/` 微调 YOLO，区分 `player_near` / `player_far` | `python src/training/train_person_detector.py` |
-| `merge_hard_negatives.py` | 把挖到的难例（误检的球童/观众等）合并进训练集，提升判别力 | `python src/training/merge_hard_negatives.py` |
-| `yolo-train-legacy.py` | 旧版训练脚本，保留备查 | — |
+| `train_person_detector.py` | Fine-tunes YOLO based on `data/person_sorter/` to distinguish `player_near` / `player_far` | `python src/training/train_person_detector.py` |
+| `merge_hard_negatives.py` | Merges mined hard examples (misdetected ball boys/spectators, etc.) into the training set to improve discriminative power | `python src/training/merge_hard_negatives.py` |
+| `yolo-train-legacy.py` | Old training script, kept for reference | — |
 
-## 配套数据工具（在 `../utils/`）
+## Accompanying Data Tools (in `../utils/`)
 
 ```
-data-creater.py      采样图片到 data/person_sorter/image/
-label_tool.py        标注 bounding box（近/远端）
-dataset_splitter.py  划分 train/val
+data-creater.py      Samples images into data/person_sorter/image/
+label_tool.py         Labels bounding boxes (near/far side)
+dataset_splitter.py   Splits into train/val
 ─────────────────────────────────────────
-train_person_detector.py   训练
-hard_negative_extractor.py / hard_negative_reviewer.py   难例挖掘与复核（../utils/）
+train_person_detector.py   Training
+hard_negative_extractor.py / hard_negative_reviewer.py   Hard-example mining and review (../utils/)
 ```
 
-数据集配置：`configs/person_sorter_dataset.yaml`。
+Dataset configuration: `configs/person_sorter_dataset.yaml`.

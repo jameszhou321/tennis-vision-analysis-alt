@@ -1,7 +1,7 @@
-"""court_detector.py — 球场检测器（供 main.py 使用）
+"""court_detector.py — Court Detector (for use by main.py)
 
-功能：封装 YOLO 球场关键点检测，提供 CourtDetector 类接口
-修复：增加了强健的 Hough 变换线条解包守护，防止由于数据维度异常产生的 Unpack 错误
+Function: Encapsulates YOLO tennis court keypoint detection, providing the CourtDetector class interface.
+Fix: Added a robust Hough Transform line unpacking guard to prevent Unpack errors caused by anomalous data dimensions.
 """
 import cv2
 import numpy as np
@@ -13,7 +13,7 @@ class CourtDetector:
 
     def get_rois(self, frame, width, height):
         """
-        提取球场边缘并返回远端和近端的 ROI 坐标
+        Extracts court edges and returns the ROI coordinates for the far end and near end.
         """
         small_frame = cv2.resize(frame, (0, 0), fx=self.scale, fy=self.scale)
         gray = cv2.cvtColor(small_frame, cv2.COLOR_BGR2GRAY)
@@ -31,7 +31,8 @@ class CourtDetector:
 
         for line in lines:
             # =====================================================================
-            # 增强型解包守卫：确保只解析符合 [x1, y1, x2, y2] 格式的有效线段
+            # Enhanced Unpacking Guard: Ensure only valid line segments matching 
+            # the [x1, y1, x2, y2] format are parsed.
             # =====================================================================
             try:
                 if len(line.shape) == 1 and len(line) == 4:
@@ -39,9 +40,9 @@ class CourtDetector:
                 elif len(line) > 0 and len(line[0]) == 4:
                     x1, y1, x2, y2 = line[0]
                 else:
-                    continue  # 跳过结构异常的噪声数据
+                    continue  # Skip structural noise data anomalies
             except (TypeError, IndexError, ValueError):
-                continue  # 捕获任何潜在的解包异常，确保多线程不崩溃
+                continue  # Catch any potential unpacking exceptions to ensure multithreading does not crash
             # =====================================================================
 
             if y1 < h * 0.3 or y2 < h * 0.3 or y1 > h * 0.9 or y2 > h * 0.9:
@@ -85,7 +86,7 @@ class CourtDetector:
                     else:
                         net_y = c_y_min + c_h * 0.45
 
-                    # 向上延展 80% 球场高度，确保远端球员完整进入 ROI
+                    # Extend upwards by 80% of the court height to ensure the far player fits completely into the ROI
                     f_y1 = max(0, c_y_min - c_h * 0.8)
 
                     f_y2 = net_y + 15 * self.scale
@@ -93,7 +94,7 @@ class CourtDetector:
                     f_x2_b = self._get_x(right_lines, net_y) or tr_x
                     f_x1, f_x2 = f_x1_b, f_x2_b
 
-                    # 近端 ROI
+                    # Near end ROI
                     n_y1 = net_y - 15 * self.scale
                     n_y2 = min(h, c_y_max + c_h * 0.3)
                     n_x1_b = self._get_x(left_lines, c_y_max) or bl_x

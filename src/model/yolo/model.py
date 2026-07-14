@@ -1,6 +1,6 @@
 """
-YOLO 单帧动作分类 — 模型定义
-使用 YOLO11n backbone + 全局平均池化 + 分类头
+YOLO Single-Frame Action Classification — Model Definition
+Uses YOLO11n backbone + Global Average Pooling + Classification Head
 """
 
 import torch
@@ -9,22 +9,22 @@ from ultralytics import YOLO
 
 
 class YoloFrameClassifier(nn.Module):
-    """YOLO11 backbone（含特征提取）+ 分类头，单帧 5 类动作分类"""
+    """YOLO11 backbone (feature extractor inclusive) + Classification head for single-frame 5-class action classification."""
 
     def __init__(self, weights_path, num_classes=5, unfreeze_backbone=True, img_size=224):
         super().__init__()
         self.img_size = img_size
         yolo = YOLO(weights_path)
-        self.model = yolo.model          # DetectionModel，其 forward 处理 skip connections
+        self.model = yolo.model          # DetectionModel, whose forward pass handles skip connections
 
-        # yolo11n P5 输出通道 256
+        # YOLO11n P5 output channel size is 256
         feat_ch = 256
 
-        # 注册 hook 在 Detect 之前最后输出的 backbone feature
+        # Register a hook to capture the final backbone feature output right before the Detect head
         self._captured = None
         self._hook_handle = self.model.model[22].register_forward_hook(self._capture)
 
-        # 分类头
+        # Classification Head
         self.pool = nn.AdaptiveAvgPool2d(1)
         self.classifier = nn.Sequential(
             nn.Dropout(0.3),
@@ -41,7 +41,7 @@ class YoloFrameClassifier(nn.Module):
             for p in self.model.parameters():
                 p.requires_grad_(False)
 
-        # ImageNet 归一化（与 MST 一致）
+        # ImageNet normalization constants (aligned with MST config)
         self.register_buffer("_mean", torch.tensor([0.485, 0.456, 0.406]).view(1, 3, 1, 1))
         self.register_buffer("_std", torch.tensor([0.229, 0.224, 0.225]).view(1, 3, 1, 1))
 
@@ -50,7 +50,7 @@ class YoloFrameClassifier(nn.Module):
 
     def forward(self, x):
         # x: (B, 3, H, W) float32, ImageNet normalized
-        # 输入已由 dataset 完成 resize 与归一化，此处直接前向
+        # Input resizing and normalization are handled by the dataset, forward directly here
         _ = self.model(x)                     # DetectionModel.forward
         feat = self._captured                  # (B, C, fH, fW)
         pooled = self.pool(feat).flatten(1)    # (B, C)

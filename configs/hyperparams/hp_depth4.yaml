@@ -1,5 +1,5 @@
-﻿# 超参实验：depth=4（浅层 Transformer，作为 depth=8 的对照组）
-# 对比 main.yaml（depth=8）和 hp_depth12.yaml，观察深度对性能的影响曲线
+﻿# Hyperparameter Experiment: depth=4 (Shallow Transformer, serves as the control group for depth=8)
+# Compared against main.yaml (depth=8) and hp_depth12.yaml to observe the performance impact curve of depth
 
 data_root: "data/rallies_train"
 crops_root: "data/rallies_train"
@@ -25,7 +25,7 @@ merge_visual_tokens: true
 parallel_backbones: false
 
 embed_dim: 128
-depth: 4                         # ← 变量
+depth: 4                         # ← Variable
 num_heads: 4
 dropout: 0.3
 

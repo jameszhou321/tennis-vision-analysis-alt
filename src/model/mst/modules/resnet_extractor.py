@@ -1,11 +1,14 @@
-"""resnet_extractor.py — ResNet18 视觉特征提取器"""
+"""resnet_extractor.py — ResNet18 Visual Feature Extractor"""
 import torch.nn as nn
 import torchvision.models as tv_models
 from .token_resampler import TokenResampler
 
 
 class ResNet18BackboneExtractor(nn.Module):
-    """ResNet18 骨干，经 TokenResampler 输出固定 visual_tokens 个 token。"""
+    """ResNet18 backbone that passes features through a TokenResampler 
+    
+    to output a fixed number of visual_tokens.
+    """
 
     def __init__(self, tokens_per_scale, embed_dim, visual_tokens=16):
         super().__init__()

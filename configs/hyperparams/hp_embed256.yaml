@@ -1,4 +1,4 @@
-﻿# 超参实验：embed_dim=256（更大容量，观察过拟合风险）
+﻿# Hyperparameter Experiment: embed_dim=256 (Larger capacity, observe overfitting risk)
 
 data_root: "data/rallies_train"
 crops_root: "data/rallies_train"
@@ -23,9 +23,9 @@ visual_tokens: 16
 merge_visual_tokens: true
 parallel_backbones: false
 
-embed_dim: 256                   # ← 变量
+embed_dim: 256                   # ← Variable
 depth: 8
-num_heads: 8                     # num_heads 随 embed_dim 同步调整（256/8=32）
+num_heads: 8                     # num_heads adjusted synchronously with embed_dim (256/8=32)
 dropout: 0.3
 
 batch_size: 2

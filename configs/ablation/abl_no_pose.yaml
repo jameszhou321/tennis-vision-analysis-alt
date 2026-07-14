@@ -1,5 +1,5 @@
-﻿# 消融实验：去掉姿态输入（use_pose=false，pose token 槽保留但全零）
-# 对比 main.yaml，量化姿态特征的贡献
+﻿# Ablation Study: Remove pose input (use_pose=false, pose token slot is retained but all zeros)
+# Comparison with main.yaml to quantify the contribution of pose features
 
 data_root: "data/rallies_train"
 crops_root: "data/rallies_train"
@@ -12,7 +12,7 @@ class_weights: [1.0, 4.0, 5.0, 4.0, 1.5]
 
 use_visual: true
 use_player_crops: true
-use_pose: false                  # ← 变量：姿态置零
+use_pose: false                  # ← Variable: Pose set to zero
 use_pos_encoding: false
 visual_backbone: "yolo11"
 global_backbone_weights: "models/yolo/yolo11n.pt"

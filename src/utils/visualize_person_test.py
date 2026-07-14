@@ -1,7 +1,7 @@
 """
-visualize_person_test.py — 可视化 person 检测结果
-用法：python src/utils/visualize_person_test.py
-输出：results/person_test/viz/
+visualize_person_test.py — Visualizes person detection results.
+Usage: python src/utils/visualize_person_test.py
+Outputs: results/person_test/viz/
 """
 import os
 import json
@@ -22,16 +22,16 @@ VIZ_DIR.mkdir(parents=True, exist_ok=True)
 
 CLASS_NAMES = {0: "near", 1: "far"}
 COLORS = {
-    "gt": (0, 255, 0),       # 绿色 = GT
-    "pred_hi": (0, 0, 255),  # 红色 = 高置信度预测 (conf>=0.5)
-    "pred_lo": (0, 165, 255) # 橙色 = 低置信度预测 (conf<0.5)
+    "gt": (0, 255, 0),       # Green = Ground Truth (GT)
+    "pred_hi": (0, 0, 255),  # Red = High-confidence prediction (conf >= 0.5)
+    "pred_lo": (0, 165, 255) # Orange = Low-confidence prediction (conf < 0.5)
 }
 
 
 def get_short_path(path_str):
     try:
         buf = ctypes.create_unicode_buffer(260)
-        if not hasattr(ctypes, "windll"):  # 非 Windows 直接用原路径
+        if not hasattr(ctypes, "windll"):  # Non-Windows systems use the original path directly
             return path_str
         ctypes.windll.kernel32.GetShortPathNameW(path_str, buf, 260)
         return buf.value
@@ -77,13 +77,13 @@ def visualize_image(model, img_path, split, out_path):
         return
     h, w = img.shape[:2]
 
-    # GT 绿框
+    # Ground Truth Green Boxes
     gt_labels = load_labels(img_path, split)
     for gt in gt_labels:
         cls_name = CLASS_NAMES.get(gt["class"], str(gt["class"]))
         draw_box(img, gt["bbox"], f"GT:{cls_name}", COLORS["gt"])
 
-    # 推理：同时用 conf=0.25 跑，显示所有候选
+    # Inference: Run with conf=0.25 to show all candidates
     img_short = get_short_path(str(img_path))
     results = model.predict(source=img_short, conf=0.25, verbose=False)
     if results and results[0].boxes:
@@ -97,11 +97,11 @@ def visualize_image(model, img_path, split, out_path):
             color = COLORS["pred_hi"] if conf >= 0.5 else COLORS["pred_lo"]
             draw_box(img, (x_c, y_c, bw, bh), f"{cls_name}:{conf:.2f}", color)
 
-    # 图例
+    # Plot Legend Overlay
     cv2.putText(img, "GREEN=GT  RED=pred>=0.5  ORANGE=pred<0.5",
                 (10, h - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 255, 255), 1)
 
-    # 写出（中文路径安全写法）
+    # Export out (safe approach for paths containing special/multi-byte characters)
     ext = out_path.suffix
     ok, buf = cv2.imencode(ext, img)
     if ok:
@@ -113,7 +113,7 @@ def main():
     with open(RESULTS_JSON, "r", encoding="utf-8") as f:
         per_image = json.load(f)
 
-    # 按类别分组
+    # Group records by tracking categorization performance
     complete_miss = [r for r in per_image if r["pred_count"] == 0 and r["gt_count"] > 0]
     partial_miss  = [r for r in per_image if 0 < r["pred_count"] < r["gt_count"]]
     correct       = [r for r in per_image if r["tp"] == r["gt_count"] and r["gt_count"] > 0]
@@ -124,23 +124,23 @@ def main():
         [("ok", r) for r in correct[:5]]
     )
 
-    print(f"完全漏检: {len(complete_miss)}, 部分漏检: {len(partial_miss)}, 正确: {len(correct)}")
-    print(f"生成 {len(samples)} 张可视化图...")
+    print(f"Complete Misses: {len(complete_miss)}, Partial Misses: {len(partial_miss)}, Correct: {len(correct)}")
+    print(f"Generating {len(samples)} visualization images...")
 
     model_short = get_short_path(str(MODEL_PATH))
     model = YOLO(model_short)
 
     for tag, record in samples:
         rel_path = record["image"]
-        # rel_path 形如 data/person_sorter/images/train/xxx.jpg
+        # rel_path format: data/person_sorter/images/train/xxx.jpg
         img_path = PROJECT_DIR / rel_path
         split = "train" if "train" in rel_path else "val"
         out_name = f"{tag}_{img_path.stem[:60]}.jpg"
         out_path = VIZ_DIR / out_name
         visualize_image(model, img_path, split, out_path)
-        print(f"  {out_name}")
+        print(f"  Exported: {out_name}")
 
-    print(f"\n可视化结果保存到: {VIZ_DIR}")
+    print(f"\nVisualization plots saved to: {VIZ_DIR}")
 
 
 if __name__ == "__main__":

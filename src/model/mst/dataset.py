@@ -1,10 +1,10 @@
-"""dataset.py — 动作识别数据集加载器 v2
+"""dataset.py — Action Recognition Dataset Loader v2
 
-支持三路视觉流（全帧 + 球员1 + 球员2），可通过 config 开关控制
-pose_tensor 维度：125 = 17×3(绝对坐标+conf) + 17×2(相对中心偏移) + 2(人物中心，相对球场中心)
-+ 2(速度，球场相对坐标差分) + 2(加速度)
-+ 6(球: 位置2+速度2+加速度2，暂时全零)
-+ 28(球场14点×2，conf<0.3时置零)
+Supports a 3-way visual stream (full frame + player 1 + player 2), controlled via config switches.
+pose_tensor dimensions: 125 = 17×3 (absolute coords + conf) + 17×2 (relative center offsets) + 2 (person center, relative to court center)
++ 2 (velocity, court relative coordinate difference) + 2 (acceleration)
++ 6 (ball: position 2 + velocity 2 + acceleration 2, temporarily all zeros)
++ 28 (14 court points × 2, zeroed out when conf < 0.3)
 """
 import os
 import json
@@ -14,33 +14,33 @@ import cv2
 import numpy as np
 from torch.utils.data import Dataset
 
-POSE_DIM = 125  # 91 + 6(球) + 28(球场14点×2)
+POSE_DIM = 125  # 91 + 6 (ball) + 28 (14 court points × 2)
 
-# 统一高度 320，三路横向拼接后宽度 = 320+320+320 = 960
-# 归一化在 GPU 端做，CPU 端保持 uint8 节省 PCIe 带宽
+# Unified height is 320. Width after 3-way horizontal concatenation = 320 + 320 + 320 = 960.
+# Normalization is performed on the GPU side; the CPU side maintains uint8 to save PCIe bandwidth.
 _IMAGENET_MEAN = torch.tensor([0.485, 0.456, 0.406], dtype=torch.float32).view(3, 1, 1)
 _IMAGENET_STD  = torch.tensor([0.229, 0.224, 0.225], dtype=torch.float32).view(3, 1, 1)
 
 
 def _get_short_path(path):
     buf = ctypes.create_unicode_buffer(512)
-    if not hasattr(ctypes, "windll"):  # 非 Windows 直接用原路径
+    if not hasattr(ctypes, "windll"):  # Use original path directly on non-Windows systems
         return path
     ctypes.windll.kernel32.GetShortPathNameW(path, buf, 512)
     return buf.value or path
 
 
 def _resize_uint8(img_bgr, h, w):
-    """resize BGR uint8 图像，返回 RGB uint8 numpy [H, W, 3]"""
+    """Resizes BGR uint8 image and returns RGB uint8 numpy array [H, W, 3]"""
     img = cv2.resize(img_bgr, (w, h), interpolation=cv2.INTER_LINEAR)
     return cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
 
 
-# ── 图像数据增强（训练时用） ────────────────────────────────────────────
+# ── Image Data Augmentation (Used during training) ────────────────────────────────────────────
 
 def _apply_augmentations(rgb):
-    """对单张 RGB uint8 [H,W,3] 依次应用增强。"""
-    # 1) 颜色抖动（亮度/对比度/饱和度/色相）
+    """Sequentially applies augmentations to a single RGB uint8 [H, W, 3] image."""
+    # 1) Color Jitter (brightness/contrast/saturation/hue)
     if np.random.rand() < 0.6:
         brightness = np.random.uniform(0.7, 1.3)
         contrast   = np.random.uniform(0.7, 1.3)
@@ -55,17 +55,17 @@ def _apply_augmentations(rgb):
         hsv = np.clip(hsv, 0, 255).astype(np.uint8)
         rgb = cv2.cvtColor(hsv, cv2.COLOR_HSV2RGB)
 
-    # 2) 高斯噪声
+    # 2) Gaussian Noise
     if np.random.rand() < 0.4:
         noise = np.random.randn(*rgb.shape).astype(np.float32) * 8
         rgb = np.clip(rgb.astype(np.float32) + noise, 0, 255).astype(np.uint8)
 
-    # 3) 高斯模糊
+    # 3) Gaussian Blur
     if np.random.rand() < 0.3:
         k = np.random.choice([3, 5])
         rgb = cv2.GaussianBlur(rgb, (k, k), 0)
 
-    # 4) 随机擦除（Cutout）
+    # 4) Random Erasing (Cutout)
     if np.random.rand() < 0.3:
         h, w = rgb.shape[:2]
         area = h * w
@@ -78,7 +78,7 @@ def _apply_augmentations(rgb):
             color = np.random.randint(0, 256, size=(3,)).tolist()
             rgb[y:y+eh, x:x+ew] = color
 
-    # 5) 半透明彩色覆盖（用户提出的）
+    # 5) Translucent Color Overlay (Requested by user)
     if np.random.rand() < 0.25:
         h, w = rgb.shape[:2]
         overlay = np.full((h, w, 3), np.random.randint(0, 256, size=(3,)), dtype=np.uint8)
@@ -90,7 +90,7 @@ def _apply_augmentations(rgb):
 
 
 def _parse_player(frame_data, player_key):
-    """从单帧数据中提取指定球员的 bbox 中心和 17 个关键点，失败返回 None。"""
+    """Extracts the bbox center and 17 keypoints of the specified player from single-frame data. Returns None if failed."""
     p = frame_data.get(player_key) if isinstance(frame_data, dict) else None
     if p is None:
         return None
@@ -105,13 +105,13 @@ def _parse_player(frame_data, player_key):
 
 def _build_pose_vec(player, cx_prev, cy_prev, vx_prev, vy_prev, court_kps=None, W=1920.0, H=1080.0):
     """
-    构建单帧 125 维物理特征向量。
-    player: _parse_player 的返回值（dict），None 时返回全零向量。
-    court_kps: 14 个球场关键点 [[x,y,conf],...] 或 None。
-    cx_prev/cy_prev: 上一帧的球场相对坐标（已归一化），None 时为首帧。
-    返回 (vec_125, rel_cx, rel_cy, vx, vy) 供下一帧使用（坐标均为球场相对归一化值）。
+    Builds a single-frame 125-dimensional physical feature vector.
+    player: Return value from _parse_player (dict), returns an all-zero vector if None.
+    court_kps: 14 court keypoints [[x,y,conf],...] or None.
+    cx_prev/cy_prev: Court relative coordinates of the previous frame (normalized), None for the first frame.
+    Returns (vec_125, rel_cx, rel_cy, vx, vy) for the next frame's use (coordinates are all court relative normalized values).
     """
-    # 球场中心（conf≥0.3 的点均值，回退到帧中心）
+    # Court center (mean of points with conf >= 0.3, falls back to frame center)
     court_cx, court_cy = W / 2, H / 2
     if court_kps:
         valid = [kp for kp in court_kps if len(kp) >= 3 and kp[2] >= 0.3]
@@ -125,30 +125,30 @@ def _build_pose_vec(player, cx_prev, cy_prev, vx_prev, vy_prev, court_kps=None, 
     cx, cy = player["cx"], player["cy"]
     kps = player["kps"]
 
-    # 17×3：绝对坐标 + conf
+    # 17×3: Absolute coordinates + conf
     abs_part = []
     for kp in kps:
         abs_part.extend([kp[0] / W, kp[1] / H, kp[2]])
 
-    # 17×2：相对人物中心偏移
+    # 17×2: Offset relative to person center
     rel_part = []
     for kp in kps:
         rel_part.extend([(kp[0] - cx) / W, (kp[1] - cy) / H])
 
-    # 人物中心（相对球场中心的归一化坐标）
+    # Person center (normalized coordinates relative to the court center)
     rel_cx = (cx - court_cx) / W
     rel_cy = (cy - court_cy) / H
     center_part = [rel_cx, rel_cy]
 
-    # 速度（球场相对坐标的帧间差分）
+    # Velocity (inter-frame difference of court relative coordinates)
     vx = rel_cx - cx_prev if cx_prev is not None else 0.0
     vy = rel_cy - cy_prev if cy_prev is not None else 0.0
 
-    # 加速度
+    # Acceleration
     ax = vx - vx_prev
     ay = vy - vy_prev
 
-    # 球场 14 点坐标（conf<0.3 时置零，共 28 维）
+    # 14 court point coordinates (zeroed out when conf < 0.3, 28 dimensions total)
     court_part = []
     for i in range(14):
         if court_kps and i < len(court_kps):
@@ -161,7 +161,7 @@ def _build_pose_vec(player, cx_prev, cy_prev, vx_prev, vy_prev, court_kps=None, 
             court_part.extend([0.0, 0.0])
 
     vec = np.array(abs_part + rel_part + center_part + [vx, vy, ax, ay]
-                   + [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]  # 球: 位置xy + 速度xy + 加速度xy
+                   + [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]  # Ball: position xy + velocity xy + acceleration xy
                    + court_part,
                    dtype=np.float32)
     return vec, rel_cx, rel_cy, vx, vy
@@ -182,7 +182,7 @@ class TennisActionDataset(Dataset):
         self.min_seq_len = cfg.get("min_seq_len", max(30, cfg["seq_len"] // 2))
         self.use_visual = cfg.get("use_visual", True)
         self.use_player_crops = cfg.get("use_player_crops", True)
-        self.augment = augment  # 训练集开启，测试集关闭
+        self.augment = augment  # Enabled for training set, disabled for test set
 
         if clip_dirs is None:
             clip_dirs = [
@@ -195,7 +195,7 @@ class TennisActionDataset(Dataset):
         self.meta_cache = {}
         self.chunks = []
 
-        print(f"[dataset] 预加载 JSON 并切片（seq_len={self.seq_len}）...")
+        print(f"[dataset] Preloading JSON and slicing (seq_len={self.seq_len})...")
         for clip_dir in self.clip_dirs:
             pose_path = os.path.join(clip_dir, "pose_data.json")
             anno_path = os.path.join(clip_dir, "annotations.json")
@@ -223,10 +223,10 @@ class TennisActionDataset(Dataset):
             }
 
         self._build_chunks()
-        print(f"[dataset] 共生成 {len(self.chunks)} 个切片。")
+        print(f"[dataset] Successfully generated {len(self.chunks)} slices.")
 
     def _build_chunks(self):
-        """固定切片，用于测试集或初始化。"""
+        """Fixed slicing, used for test set or initialization."""
         self.chunks = []
         for clip_dir, meta in self.meta_cache.items():
             total_frames = meta["total_frames"]
@@ -238,7 +238,7 @@ class TennisActionDataset(Dataset):
                 })
 
     def reshuffle(self):
-        """每个 epoch 开始前调用，随机重新划分训练切片。"""
+        """Called before the start of each epoch to randomly re-slice training samples."""
         if not self.augment:
             return
         self.chunks = []
@@ -276,8 +276,9 @@ class TennisActionDataset(Dataset):
         pose_tensor = torch.zeros(self.seq_len, POSE_DIM)
         labels = torch.full((self.seq_len,), -100, dtype=torch.long)
         keyframe_labels = torch.zeros(self.seq_len, dtype=torch.long)
-        # uint8 拼接 tensor：[T, 3, 320, 960]（全帧pad到320×320 + p1 320×320 + p2 320×320）
-        # 归一化在 GPU 端做，CPU 端保持 uint8 节省 PCIe 带宽
+        
+        # Concat uint8 tensor: [T, 3, 320, 960] (full frame padded to 320×320 + p1 320×320 + p2 320×320)
+        # Normalization is performed on the GPU side; the CPU side maintains uint8 to save PCIe bandwidth.
         if self.use_visual:
             packed_frames = torch.zeros(self.seq_len, 3, 320, 960, dtype=torch.uint8)
         else:
@@ -297,7 +298,7 @@ class TennisActionDataset(Dataset):
         else:
             fps = 30.0
 
-        # 预计算关键帧集合（±2 帧容差）
+        # Pre-calculate keyframe set (±2 frames tolerance)
         key_frames = set()
         if isinstance(anno_json, list):
             for seg in anno_json:
@@ -319,7 +320,7 @@ class TennisActionDataset(Dataset):
             global_idx = start + t
             current_time = global_idx / fps
 
-            # 动作标签
+            # Action Label
             action_id = 0
             if isinstance(anno_json, list):
                 for seg in anno_json:
@@ -328,10 +329,10 @@ class TennisActionDataset(Dataset):
                         break
             labels[t] = action_id
 
-            # 关键帧标签
+            # Keyframe Label
             keyframe_labels[t] = 1 if global_idx in key_frames else 0
 
-            # 姿态（125维）
+            # Pose (125-dimensional)
             frame_data = (pose_json.get(str(global_idx))
                           if isinstance(pose_json, dict)
                           else (pose_json[global_idx] if global_idx < len(pose_json) else None))
@@ -345,7 +346,7 @@ class TennisActionDataset(Dataset):
             )
             pose_tensor[t] = torch.from_numpy(vec)
 
-            # 全帧视觉（pad 到 320×320，写入拼接 tensor 的 [:, :, 0:320]）
+            # Full Frame Visual (padded to 320×320, written into the [:, :, 0:320] slice of the packed tensor)
             if use_frames_dir:
                 fp = os.path.join(frames_dir, f"{global_idx:06d}.jpg")
                 if os.path.exists(fp):
@@ -360,7 +361,7 @@ class TennisActionDataset(Dataset):
                     rgb = _resize_uint8(frame, 320, 320)
                     packed_frames[t, :, :, :320] = torch.from_numpy(rgb.transpose(2, 0, 1))
 
-            # 裁剪图（p1 写入 [:, :, 320:640]，p2 写入 [:, :, 640:960]）
+            # Cropped Images (p1 written into [:, :, 320:640], p2 written into [:, :, 640:960])
             if has_crops:
                 name = f"{global_idx:06d}.jpg"
                 p1_path = os.path.join(p1_dir, name)

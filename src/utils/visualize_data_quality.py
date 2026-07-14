@@ -1,11 +1,11 @@
 """
-数据质量可视化工具
-用法: python src/utils/visualize_data_quality.py [--rally <rally目录>] [--frame <帧号>]
-不指定 rally 时随机选片段（跨所有 rally 随机）。
-输出：
-  1. 主视图：原始帧叠加球场线 + 运动员框 + 肢体关键点
-  2. 裁剪图：near_player / far_player 的预提取裁剪图 + bbox 区域叠加关键点
-按 n/p 切换帧，r 随机跳到任意 rally 的任意帧，q 退出。
+Data Quality Visualization Tool
+Usage: python src/utils/visualize_data_quality.py [--rally <rally_directory>] [--frame <frame_number>]
+If no rally directory is specified, a random segment will be selected (randomly sampled across all rallies).
+Outputs:
+  1. Main Viewport: Raw frame overlayed with court grid lines + athlete bounding boxes + joint skeleton keypoints.
+  2. Crop Panels: Pre-extracted cropping patches for near_player / far_player + bounding box regions overlayed with keypoints.
+Press 'n'/'p' to step through frames, 'r' to jump randomly to any frame of any rally, and 'q' to quit.
 """
 import os
 import json
@@ -33,7 +33,7 @@ _CONF_THRESH = 0.1
 
 def get_short_path(path):
     buf = ctypes.create_unicode_buffer(512)
-    if not hasattr(ctypes, "windll"):  # 非 Windows 直接用原路径
+    if not hasattr(ctypes, "windll"):  # Non-Windows systems use the original path directly
         return path
     ctypes.windll.kernel32.GetShortPathNameW(path, buf, 512)
     return buf.value or path
@@ -85,19 +85,19 @@ def draw_court(img, court_kps):
 
 
 def make_crop_panel(frame, player_data, crop_path, color, label):
-    """返回 320x640 面板：左=预提取裁剪图，右=bbox区域+关键点。"""
+    """Returns a 320x640 display panel: Left = Pre-extracted crop image, Right = Bounding box area + Keypoints."""
     panel = np.zeros((320, 640, 3), dtype=np.uint8)
 
-    # 左：预提取裁剪图
+    # Left Viewport: Pre-extracted Crop Image
     if crop_path and os.path.exists(crop_path):
         raw = np.fromfile(crop_path, dtype=np.uint8)
         img = cv2.imdecode(raw, cv2.IMREAD_COLOR)
         if img is not None:
             panel[:, :320] = cv2.resize(img, (320, 320))
-    cv2.putText(panel, f"{label} 预提取", (4, 18),
+    cv2.putText(panel, f"{label} Pre-extracted", (4, 18),
                 cv2.FONT_HERSHEY_SIMPLEX, 0.55, color, 1)
 
-    # 右：从原帧裁 bbox，叠加关键点
+    # Right Viewport: Crop bounding box region directly from the raw frame and overlay keypoints
     if player_data and player_data.get("bbox") and frame is not None:
         h, w = frame.shape[:2]
         b = player_data["bbox"]
@@ -112,7 +112,7 @@ def make_crop_panel(frame, player_data, crop_path, color, label):
                        float(kp[2])] for kp in kps]
             draw_keypoints(patch, mapped, color)
             panel[:, 320:] = patch
-    cv2.putText(panel, f"{label} bbox+关键点", (324, 18),
+    cv2.putText(panel, f"{label} Bounding Box + Keypoints", (324, 18),
                 cv2.FONT_HERSHEY_SIMPLEX, 0.55, color, 1)
 
     return panel
@@ -131,7 +131,7 @@ def load_entry(pose_data, idx):
 
 
 def build_index(data_root):
-    """返回 [(rally_dir, total_frames), ...] 列表。"""
+    """Returns a structured catalog list mapping: [(rally_directory, total_frames), ...]."""
     index = []
     for name in sorted(os.listdir(data_root)):
         d = os.path.join(data_root, name)
@@ -148,14 +148,14 @@ def build_index(data_root):
 
 
 def run(data_root, init_rally=None, init_frame=None):
-    print("构建索引...")
+    print("Building index mapping catalog...")
     index = build_index(data_root)
     if not index:
-        print("没有找到有效的 rally 目录")
+        print("No valid rally data directories discovered.")
         return
-    print(f"共 {len(index)} 个 rally。操作: n=下一帧  p=上一帧  r=随机片段  q=退出")
+    print(f"Discovered {len(index)} total rallies. Controls: n=Next Frame | p=Previous Frame | r=Random Rally Frame | q=Quit")
 
-    # 初始选择
+    # Initial Data Initialization Selection
     if init_rally:
         rally_dir = init_rally
         pose_path = os.path.join(rally_dir, "pose_data.json")
@@ -194,12 +194,12 @@ def run(data_root, init_rally=None, init_frame=None):
             draw_bbox(vis, far.get("bbox"), _FAR_COLOR, "far")
             draw_keypoints(vis, far.get("keypoints", []), _FAR_COLOR)
 
-        # 状态栏
+        # Status Bar Render Engine
         court_n = sum(1 for kp in (entry.get("court") or []) if len(kp) >= 3 and kp[2] >= 0.3) if entry else 0
         near_n  = sum(1 for kp in (near.get("keypoints") or []) if kp[2] >= _CONF_THRESH) if near else 0
         far_n   = sum(1 for kp in (far.get("keypoints")  or []) if kp[2] >= _CONF_THRESH) if far  else 0
         rerun   = "rerun:Y" if (entry or {}).get("_pose_rerun") else "rerun:N"
-        info    = (f"{os.path.basename(rally_dir)}  帧{frame_idx}/{total-1}"
+        info    = (f"{os.path.basename(rally_dir)}  Frame:{frame_idx}/{total-1}"
                    f"  court:{court_n}/14  near:{near_n}/17  far:{far_n}/17  {rerun}")
         cv2.putText(vis, info, (10, vis.shape[0] - 10),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 0, 0), 3)
@@ -208,10 +208,10 @@ def run(data_root, init_rally=None, init_frame=None):
 
         h, w = vis.shape[:2]
         scale = min(1.0, 1280 / w, 720 / h)
-        cv2.imshow("主视图  n/p=切帧  r=随机片段  q=退出",
+        cv2.imshow("Main Viewport | n/p=Frame Navigate | r=Random Asset Jump | q=Quit",
                    cv2.resize(vis, (int(w * scale), int(h * scale))))
 
-        # 裁剪图面板
+        # Crop Panel Generation Engine
         panels = []
         name = f"{frame_idx:06d}.jpg"
         if near:
@@ -225,7 +225,7 @@ def run(data_root, init_rally=None, init_frame=None):
                 os.path.join(p2_dir, name) if os.path.isdir(p2_dir) else None,
                 _FAR_COLOR, "far"))
         if panels:
-            cv2.imshow("裁剪图  (左=预提取  右=bbox+关键点)", np.vstack(panels))
+            cv2.imshow("Crop Display Panels (Left = Pre-extracted | Right = Bounding Box + Keypoints)", np.vstack(panels))
 
         key = cv2.waitKey(0) & 0xFF
         if key == ord('q'):
@@ -244,7 +244,7 @@ def run(data_root, init_rally=None, init_frame=None):
             p1_dir = os.path.join(rally_dir, "player1")
             p2_dir = os.path.join(rally_dir, "player2")
             frame_idx = random.randint(0, total - 1)
-            print(f"随机跳转: {os.path.basename(rally_dir)}  帧 {frame_idx}")
+            print(f"Random Segment Navigation Jump: {os.path.basename(rally_dir)} | Frame: {frame_idx}")
 
     cap.release()
     cv2.destroyAllWindows()

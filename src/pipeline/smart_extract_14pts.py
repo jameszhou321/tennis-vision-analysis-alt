@@ -1,6 +1,6 @@
-"""smart_extract_14pts.py — 智能采样标注工具
+"""smart_extract_14pts.py — Intelligent Sampling Annotation Tool
 
-功能：从比赛视频中智能采样帧，用球场模型预标注14个关键点，生成训练数据
+Function: Intelligently sample frames from match videos, pre-annotate 14 keypoints using a court model, and generate training data.
 """
 import os
 import cv2
@@ -10,7 +10,7 @@ from ultralytics import YOLO
 from scipy.optimize import least_squares
 
 # =====================================================================
-# 1. 物理坐标与权重定义
+# 1. Physical Coordinates and Weights Definitions
 # =====================================================================
 COURT_14_PTS_PHYSICAL = np.array([
     [-5.485, -11.885], [5.485, -11.885], [5.485, 11.885], [-5.485, 11.885],
@@ -24,7 +24,7 @@ BASE_WEIGHTS = np.array([9, 9, 9, 9, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1], dtype=np.flo
 
 
 # =====================================================================
-# 2. SciPy 加权矩阵求解器
+# 2. SciPy Weighted Matrix Solver
 # =====================================================================
 def reprojection_residuals(h_elements, src_pts, dst_pts, weights):
     H = np.append(h_elements, 1.0).reshape(3, 3)
@@ -33,7 +33,7 @@ def reprojection_residuals(h_elements, src_pts, dst_pts, weights):
     proj_pts_3d[:, 2] = np.where(proj_pts_3d[:, 2] == 0, 1e-7, proj_pts_3d[:, 2])
     proj_pts_2d = proj_pts_3d[:, :2] / proj_pts_3d[:, 2:]
 
-    # 分离 X 和 Y 的误差，生成 2N 个残差，满足 lm 算法要求
+    # Separate X and Y errors to generate 2N residuals to satisfy Levenberg-Marquardt (lm) algorithm requirements
     errors = proj_pts_2d - dst_pts
     weighted_errors = errors * weights[:, np.newaxis]
     return weighted_errors.flatten()
@@ -53,7 +53,7 @@ def get_weighted_homography(phys_pts, pixel_pts, weights):
 
 
 # =====================================================================
-# 3. 智能抽帧主控逻辑
+# 3. Intelligent Frame Sampling Main Control Logic
 # =====================================================================
 def smart_sampling(video_folder, model_path, output_dir, samples_per_video=20):
     model = YOLO(model_path)
@@ -70,7 +70,7 @@ def smart_sampling(video_folder, model_path, output_dir, samples_per_video=20):
         total_f = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
         if total_f < 60: continue
 
-        print(f"正在扫描视频: {v_file}")
+        print(f"Scanning video: {v_file}")
         found_in_video = 0
         attempts = 0
 
@@ -81,14 +81,14 @@ def smart_sampling(video_folder, model_path, output_dir, samples_per_video=20):
             ret, frame = cap.read()
             if not ret: continue
 
-            # 半精度极速推理
+            # Half-precision ultra-fast inference
             results = model.predict(frame, conf=0.3, verbose=False, half=True)[0]
 
             if results.boxes is not None and len(results.boxes) > 0:
                 box = results.boxes.xywhn[0].cpu().numpy()
                 area = box[2] * box[3]
 
-                # 门槛1：场地不能太小
+                # Threshold 1: The court area cannot be too small
                 if area > 0.15:
                     kpts = results.keypoints.data[0].cpu().numpy()
 
@@ -97,7 +97,7 @@ def smart_sampling(video_folder, model_path, output_dir, samples_per_video=20):
                     valid_weights = []
                     corner_count = 0
 
-                    # 提取高置信度点并叠加权重
+                    # Extract high-confidence points and apply weights
                     for i, pt in enumerate(kpts):
                         x, y, conf = pt
                         if conf > 0.4:
@@ -107,10 +107,10 @@ def smart_sampling(video_folder, model_path, output_dir, samples_per_video=20):
                             if i < 4:
                                 corner_count += 1
 
-                    # 门槛2：核心角点 >= 2 且总有效点数 >= 4
+                    # Threshold 2: Core corner points >= 2 and total valid points >= 4
                     if corner_count >= 2 and len(valid_pixel_pts) >= 4:
 
-                        # 核心计算：求解出最优的加权单应性矩阵
+                        # Core computation: Solve for the optimal weighted homography matrix
                         H = get_weighted_homography(
                             np.array(valid_phys_pts, dtype=np.float32),
                             np.array(valid_pixel_pts, dtype=np.float32),
@@ -118,24 +118,24 @@ def smart_sampling(video_folder, model_path, output_dir, samples_per_video=20):
                         )
 
                         if H is not None:
-                            # 降维打击：用算出的完美矩阵，重新生成14个点的理想像素坐标
-                            # 这样保存下来的标签天然就是刚性完美的，微调时极其舒服
+                            # Matrix conversion: Use the calculated perfect matrix to re-generate ideal pixel coordinates for the 14 points.
+                            # This ensures saved labels possess flawless rigid geometry, making fine-tuning exceptionally smooth.
                             phys_3d = np.concatenate([COURT_14_PTS_PHYSICAL, np.ones((14, 1))], axis=1)
                             proj_3d = (H @ phys_3d.T).T
                             perfect_kpts = proj_3d[:, :2] / proj_3d[:, 2:]
 
-                            # 保存图片
+                            # Save image
                             save_name = f"{os.path.splitext(v_file)[0]}_f{idx}"
                             img_path = os.path.join(img_dir, f"{save_name}.jpg")
                             cv2.imencode('.jpg', frame)[1].tofile(img_path)
 
-                            # 保存标签
+                            # Save label
                             h, w = frame.shape[:2]
                             label_str = f"0 {box[0]:.6f} {box[1]:.6f} {box[2]:.6f} {box[3]:.6f}"
 
                             for pkp in perfect_kpts:
                                 px, py = pkp[0], pkp[1]
-                                # 智能判定可见度：如果通过矩阵算出来的点在画面外，设为 0
+                                # Intelligent visibility judgment: If the point mapped via the matrix is outside the frame, set to 0
                                 vis = 2 if (0 <= px <= w and 0 <= py <= h) else 0
                                 label_str += f" {px / w:.6f} {py / h:.6f} {vis}"
 
@@ -143,10 +143,10 @@ def smart_sampling(video_folder, model_path, output_dir, samples_per_video=20):
                                 f.write(label_str + "\n")
 
                             found_in_video += 1
-                            print(f"  完美帧 ({found_in_video}/{samples_per_video}) | 角点:{corner_count}/4")
+                            print(f"  Perfect frame ({found_in_video}/{samples_per_video}) | Corners: {corner_count}/4")
 
     cap.release()
-    print(f"预标注完成！共存放在 {output_dir}")
+    print(f"Pre-annotation complete! All data stored in {output_dir}")
 
 
 if __name__ == "__main__":

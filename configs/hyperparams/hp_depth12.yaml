@@ -1,4 +1,4 @@
-﻿# 超参实验：depth=12（加深 Transformer，观察长程依赖建模能力）
+﻿# Hyperparameter Experiment: depth=12 (Deeper Transformer, observe long-range dependency modeling capability)
 
 data_root: "data/rallies_train"
 crops_root: "data/rallies_train"
@@ -24,7 +24,7 @@ merge_visual_tokens: true
 parallel_backbones: false
 
 embed_dim: 128
-depth: 12                        # ← 变量
+depth: 12                        # ← Variable
 num_heads: 4
 dropout: 0.3
 

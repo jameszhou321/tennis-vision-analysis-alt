@@ -1,20 +1,23 @@
-"""vit_extractor.py — 轻量 ViT patch embedding 特征提取器"""
+"""vit_extractor.py — Lightweight ViT Patch Embedding Feature Extractor"""
 import torch
 import torch.nn as nn
 
 
 class ViTPatchExtractor(nn.Module):
-    """
-    轻量 patch embedding：将输入图像切成 patch_grid×patch_grid 个 16×16 patch，
-    每个 patch 展平后过两层 FFN 投影到 embed_dim，直接输出 token。
-    无内部 Transformer，特征提取交给主网络 MSTFormer。
+    """Lightweight patch embedding: Splits the input image into a patch_grid x patch_grid grid 
 
-    输入: (B, 3, H, W)
-    输出: (B, num_patches, embed_dim)   num_patches = patch_grid^2
+    of 16x16 patches. Each patch is flattened and projected through a two-layer FFN to embed_dim, 
+    directly outputting tokens.
+    
+    Contains no internal Transformer layer blocks; sequence-level feature extraction is deferred 
+    to the primary MSTFormer architecture.
+
+    Input:  (B, 3, H, W)
+    Output: (B, num_patches, embed_dim) where num_patches = patch_grid^2
     """
 
     def __init__(self, patch_grid, embed_dim, vit_depth=2, num_heads=4):
-        # vit_depth / num_heads 保留参数签名兼容性，不再使用
+        # vit_depth and num_heads are preserved to maintain interface compatibility but are unused
         super().__init__()
         self.patch_grid = patch_grid
         patch_px = 16

@@ -1,7 +1,7 @@
 """
-将 data/rallies_annotated/ 中的标注数据复制到 data/rallies_train/，
-只复制训练所需的 3 个文件，跳过 annotated_clip.mp4。
-支持断点续跑。
+Copy annotation data from data/rallies_annotated/ to data/rallies_train/.
+Only copy the 3 files required for training, skipping annotated_clip.mp4.
+Supports resuming from breakpoints.
 """
 import os
 import shutil
@@ -35,9 +35,9 @@ def main():
             skipped += 1
             continue
 
-        # 检查源目录是否有所有必要文件
+        # Check if the source directory contains all required files
         if not all(os.path.exists(os.path.join(src_rally, f)) for f in REQUIRED_FILES):
-            print(f"  [SKIP] {rally} — 源目录缺少必要文件")
+            print(f"  [SKIP] {rally} — Source directory is missing required files")
             missing += 1
             continue
 
@@ -48,8 +48,8 @@ def main():
         print(f"  [COPY] {rally}")
         copied += 1
 
-    print(f"\n完成：复制 {copied} 个，跳过 {skipped} 个（已存在），缺失 {missing} 个")
-    print(f"目标目录：{DST_DIR}")
+    print(f"\nCompleted: Copied {copied}, Skipped {skipped} (already exists), Missing {missing}")
+    print(f"Destination directory: {DST_DIR}")
 
 
 if __name__ == "__main__":

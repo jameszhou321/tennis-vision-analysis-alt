@@ -1,5 +1,5 @@
-﻿# 消融实验：仅全帧视觉（去掉 pose + 裁剪图，保留全帧视觉流）
-# 介于 abl_no_pose 和 abl_no_visual 之间，量化裁剪图+姿态的联合贡献
+﻿# Ablation Study: Full-frame visual only (removes pose + cropped images, retains full-frame visual stream)
+# Positions between abl_no_pose and abl_no_visual to quantify the joint contribution of cropped images + pose
 
 data_root: "data/rallies_train"
 crops_root: "data/rallies_train"
@@ -11,8 +11,8 @@ num_classes: 5
 class_weights: [1.0, 4.0, 5.0, 4.0, 1.5]
 
 use_visual: true
-use_player_crops: false          # ← 变量：无裁剪图
-use_pose: false                  # ← 变量：无姿态
+use_player_crops: false          # ← Variable: No cropped images
+use_pose: false                  # ← Variable: No pose
 use_pos_encoding: false
 visual_backbone: "yolo11"
 global_backbone_weights: "models/yolo/yolo11n.pt"
@@ -29,7 +29,7 @@ depth: 8
 num_heads: 4
 dropout: 0.3
 
-batch_size: 4                    # 无裁剪图显存压力小，batch 可适当调大
+batch_size: 4                    # Low VRAM pressure without cropped images, batch size can be appropriately increased
 virtual_batch_size: 64
 total_epochs: 40
 learning_rate: 1.0e-4

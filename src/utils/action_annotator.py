@@ -1,7 +1,7 @@
-"""action_annotator.py — 网球动作时序标注工具（Flask Web 应用）
+"""action_annotator.py — Tennis Action Temporal Annotation Tool (Flask Web App)
 
-功能：从 rallies_new 按视频来源轮换提取片段到标注工作区，支持进度持久化
-用法：python action_annotator.py，然后访问 http://localhost:5000
+Function: Cycles and extracts video clips from rallies_new into the annotation workspace by video source, supporting progress persistence.
+Usage: Run `python action_annotator.py`, then navigate to http://localhost:5011 in your browser.
 """
 import os
 import json
@@ -107,10 +107,10 @@ def extract_next_rally(source_name):
 
 HTML_TEMPLATE = """
 <!DOCTYPE html>
-<html lang="zh-CN">
+<html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>网球动作时序标注</title>
+    <title>Tennis Action Temporal Annotator</title>
     <style>
         body { font-family: sans-serif; margin: 20px; background-color: #f5f7fa; display: flex; gap: 20px; height: 90vh; }
         .sidebar { flex: 1; background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); overflow-y: auto; min-width: 220px; }
@@ -145,49 +145,49 @@ HTML_TEMPLATE = """
 </head>
 <body>
 <div class="sidebar">
-    <h3 style="margin-top:0;">片段列表</h3>
-    <button onclick="loadPlaylist()" style="margin-bottom:12px; width:100%; background:#67c23a;">刷新目录</button>
-    <div id="playlist">加载中...</div>
+    <h3 style="margin-top:0;">Clip List</h3>
+    <button onclick="loadPlaylist()" style="margin-bottom:12px; width:100%; background:#67c23a;">Refresh Workspace</button>
+    <div id="playlist">Loading...</div>
 </div>
 
 <div class="main-panel">
     <div class="video-container">
         <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
-            <h2 id="currentVideoTitle" style="margin:0; color:#303133; font-size:16px;">请选择片段</h2>
-            <button id="btnDeleteClip" class="btn-delete-clip" onclick="deleteClip()" style="display:none;">删除此片段</button>
+            <h2 id="currentVideoTitle" style="margin:0; color:#303133; font-size:16px;">Select a clip</h2>
+            <button id="btnDeleteClip" class="btn-delete-clip" onclick="deleteClip()" style="display:none;">Delete Clip</button>
         </div>
         <div class="video-wrapper">
             <video id="videoPlayer" controls></video>
             <div id="actionOverlay"></div>
         </div>
         <div class="controls">
-            <button onclick="setPoint('start')">手动设起点 [Q]</button>
-            <button onclick="setPoint('end')">设为终点并暂停 [E]</button>
+            <button onclick="setPoint('start')">Set Start Point [Q]</button>
+            <button onclick="setPoint('end')">Set End & Pause [E]</button>
             <span style="margin-left:15px; font-size:14px;">
-                当前区间: <span id="lblStart" style="color:#409eff;font-weight:bold;">0.000</span> →
-                <span id="lblEnd" style="color:#f56c6c;font-weight:bold;">未定</span>
+                Current Range: <span id="lblStart" style="color:#409eff;font-weight:bold;">0.000</span> →
+                <span id="lblEnd" style="color:#f56c6c;font-weight:bold;">Undetermined</span>
             </span>
             <span style="margin-left:auto;">
-                播放速度:
+                Playback Speed:
                 <button id="btnSpeed05" class="btn-speed active" onclick="setSpeed(0.5)">0.5x</button>
                 <button id="btnSpeed10" class="btn-speed" onclick="setSpeed(1.0)">1.0x</button>
             </span>
         </div>
         <div class="controls" style="margin-top:15px;">
-            <button onclick="addAction('正手',1)" style="background:#67c23a;">正手 [1]</button>
-            <button onclick="addAction('反手',2)" style="background:#e6a23c;">反手 [2]</button>
-            <button onclick="addAction('发球',3)" style="background:#f56c6c;">发球 [3]</button>
-            <button onclick="addAction('移动',4)" style="background:#909399;">移动 [4]</button>
-            <button onclick="addAction('待机',0)" style="background:#303133;">待机 [5]</button>
+            <button onclick="addAction('Forehand',1)" style="background:#67c23a;">Forehand [1]</button>
+            <button onclick="addAction('Backhand',2)" style="background:#e6a23c;">Backhand [2]</button>
+            <button onclick="addAction('Serve',3)" style="background:#f56c6c;">Serve [3]</button>
+            <button onclick="addAction('Movement',4)" style="background:#909399;">Movement [4]</button>
+            <button onclick="addAction('Idle',0)" style="background:#303133;">Idle [5]</button>
         </div>
     </div>
     <div class="data-container">
         <div style="display:flex; justify-content:space-between; align-items:center;">
-            <h3 style="margin:0;">标注数据</h3>
-            <span id="saveStatus" style="color:#67c23a; font-weight:bold; display:none;">已自动保存</span>
+            <h3 style="margin:0;">Annotation Data</h3>
+            <span id="saveStatus" style="color:#67c23a; font-weight:bold; display:none;">Autosaved</span>
         </div>
         <table id="annotationTable">
-            <thead><tr><th>起 (秒)</th><th>止 (秒)</th><th>动作</th><th>操作</th></tr></thead>
+            <thead><tr><th>Start (s)</th><th>End (s)</th><th>Action</th><th>Operations</th></tr></thead>
             <tbody></tbody>
         </table>
     </div>
@@ -215,7 +215,7 @@ HTML_TEMPLATE = """
             header.className = 'source-header';
             const btn = document.createElement('button');
             btn.className = 'btn-extract';
-            btn.textContent = '提取';
+            btn.textContent = 'Extract';
             btn.dataset.source = src.source_name;
             btn.addEventListener('click', () => extractOne(src.source_name));
             header.innerHTML = '<span class="source-name" title="' + src.source_name + '">' + src.source_name + '</span>';
@@ -226,8 +226,8 @@ HTML_TEMPLATE = """
                 const item = document.createElement('div');
                 item.className = 'playlist-item';
                 const badge = r.has_json
-                    ? '<span class="badge badge-has-json">已标</span>'
-                    : '<span class="badge badge-no-json">未标</span>';
+                    ? '<span class="badge badge-has-json">Labeled</span>'
+                    : '<span class="badge badge-no-json">Unlabeled</span>';
                 item.innerHTML = '<span>' + r.rally_name + '</span>' + badge;
                 item.onclick = () => loadVideo(src.source_name, r.rally_name, item);
                 group.appendChild(item);
@@ -243,7 +243,7 @@ HTML_TEMPLATE = """
         if (data.extracted) {
             await loadPlaylist();
         } else {
-            alert(sourceName + ' 已全部提取完毕');
+            alert(sourceName + ' has been fully extracted.');
         }
     }
 
@@ -268,18 +268,18 @@ HTML_TEMPLATE = """
         tempEnd = null;
         updateUI();
         selectedRowIdx = null;
-        video.play().catch(e => console.log('等待交互'));
+        video.play().catch(e => console.log('Awaiting user interaction'));
     }
 
     async function deleteClip() {
         if (!currentFolder || !currentSource) return;
-        if (!confirm('确认删除片段 ' + currentFolder + '？删除后将自动从同一视频提取下一个片段。')) return;
+        if (!confirm('Are you sure you want to delete clip ' + currentFolder + '? Once deleted, the next clip from the same source will be automatically extracted.')) return;
 
         const res = await fetch('/api/delete/' + encodeURIComponent(currentSource) + '/' + encodeURIComponent(currentFolder), {method:'DELETE'});
         const data = await res.json();
 
         video.src = '';
-        document.getElementById('currentVideoTitle').innerText = '请选择片段';
+        document.getElementById('currentVideoTitle').innerText = 'Select a clip';
         document.getElementById('btnDeleteClip').style.display = 'none';
         annotations = [];
         renderTable();
@@ -289,9 +289,9 @@ HTML_TEMPLATE = """
         await loadPlaylist();
 
         if (data.next_extracted) {
-            alert('已删除，并从同一视频提取了新片段：' + data.next_extracted);
+            alert('Deleted. A new clip has been extracted from the same video source: ' + data.next_extracted);
         } else {
-            alert('已删除。该视频来源已无更多片段可提取。');
+            alert('Deleted. No more clips available to extract from this video source.');
         }
     }
 
@@ -338,8 +338,8 @@ HTML_TEMPLATE = """
     };
 
     function updateUI() {
-        document.getElementById('lblStart').innerText = tempStart !== null ? tempStart.toFixed(3) : '未定';
-        document.getElementById('lblEnd').innerText = tempEnd !== null ? tempEnd.toFixed(3) : '未定';
+        document.getElementById('lblStart').innerText = tempStart !== null ? tempStart.toFixed(3) : 'Undetermined';
+        document.getElementById('lblEnd').innerText = tempEnd !== null ? tempEnd.toFixed(3) : 'Undetermined';
     }
 
     function renderTable() {
@@ -350,7 +350,7 @@ HTML_TEMPLATE = """
             if (idx === selectedRowIdx) tr.classList.add('selected-row');
             tr.style.cursor = 'pointer';
             tr.innerHTML = '<td>' + item.start_time.toFixed(3) + '</td><td>' + item.end_time.toFixed(3) + '</td><td>' + item.action_name + '</td>' +
-                '<td><button class="btn-danger" onclick="deleteAction(' + idx + ')">删除</button></td>';
+                '<td><button class="btn-danger" onclick="deleteAction(' + idx + ')">Delete</button></td>';
             tr.onclick = (e) => {
                 if (e.target.tagName === 'BUTTON') return;
                 selectedRowIdx = (selectedRowIdx === idx) ? null : idx;
@@ -375,7 +375,7 @@ HTML_TEMPLATE = """
         }
     }
 
-    const ACTION_MAP = { '1': ['正手',1], '2': ['反手',2], '3': ['发球',3], '4': ['移动',4], '5': ['待机',0] };
+    const ACTION_MAP = { '1': ['Forehand',1], '2': ['Backhand',2], '3': ['Serve',3], '4': ['Movement',4], '5': ['Idle',0] };
     document.addEventListener('keydown', function(e) {
         if (['INPUT', 'TEXTAREA'].includes(e.target.tagName)) return;
         const k = e.key.toLowerCase();
@@ -396,7 +396,7 @@ HTML_TEMPLATE = """
         if (k === ' ') { e.preventDefault(); video.paused ? video.play() : video.pause(); }
     });
 
-    const ACTION_COLORS = { '正手': '#67c23a', '反手': '#e6a23c', '发球': '#f56c6c', '移动': '#909399', '待机': '#303133' };
+    const ACTION_COLORS = { 'Forehand': '#67c23a', 'Backhand': '#e6a23c', 'Serve': '#f56c6c', 'Movement': '#909399', 'Idle': '#303133' };
     video.addEventListener('timeupdate', function() {
         const t = video.currentTime;
         const overlay = document.getElementById('actionOverlay');
@@ -417,8 +417,7 @@ HTML_TEMPLATE = """
 """
 
 
-
-# ─── Flask 路由 ───────────────────────────────────────────────────────────────
+# ─── Flask Routes ─────────────────────────────────────────────────────────────
 
 @app.route('/')
 def index():
@@ -485,5 +484,5 @@ def delete_clip(source_name, folder_name):
 
 
 if __name__ == '__main__':
-    print("服务已启动。请在浏览器中访问: https://127.0.0.1:5011")
+    print("Service started successfully. Please access: https://127.0.0.1:5011")
     app.run(host='0.0.0.0', port=5011, debug=False, threaded=True, ssl_context='adhoc')

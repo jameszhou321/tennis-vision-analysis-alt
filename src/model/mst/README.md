@@ -1,66 +1,67 @@
-# model/mst/ — MSTFormer 动作识别模型（项目核心）
+# model/mst/ — MSTFormer Action Recognition Model (Core of the Project)
 
-MSTFormer（Multi-Stream Transformer）是本项目的核心模型。它把**球员姿态序列**、**球场几何位置**和**多路视觉裁剪图**融合进一个 Transformer，**双头输出**：
+MSTFormer (Multi-Stream Transformer) is the core model of this project. It fuses **player pose sequences**, **court geometric position**, and **multi-stream visual crop images** into a single Transformer, with a **dual-head output**:
 
-- 动作分类：待机 / 正手 / 反手 / 发球 / 移动（5 类）
-- 关键帧检测：每帧是否为动作切换的关键帧（二分类）
+- Action classification: Idle / Forehand / Backhand / Serve / Movement (5 classes)
+- Keyframe detection: whether each frame is a keyframe marking an action transition (binary classification)
 
-## 输入构成
+## Input Composition
 
-| 输入 | 维度 | 来源 |
+| Input | Dimensions | Source |
 | --- | --- | --- |
-| 姿态物理特征 `pose` | `[B, T, 125]` | `pose_data.json`，由 `dataset.py` 的 `_build_pose_vec` 构建 |
-| 打包视觉帧 `packed_frames` | `[B, T, 3, 320, 960]` uint8 | 全帧 + player1 + player2 三路横向拼接 |
+| Pose physical features `pose` | `[B, T, 125]` | From `pose_data.json`, built by `_build_pose_vec` in `dataset.py` |
+| Packed visual frames `packed_frames` | `[B, T, 3, 320, 960]` uint8 | Full frame + player1 + player2, concatenated side by side into three streams |
 
-> 125 维 = 17×3(关键点绝对坐标+置信度) + 17×2(相对人物中心) + 2(人物中心相对球场) + 2(速度) + 2(加速度) + 6(球，预留) + 28(球场14点×2)。视觉帧归一化在 GPU 端做，CPU 端保持 uint8 省带宽。
+> 125 dimensions = 17×3 (absolute keypoint coordinates + confidence) + 17×2 (relative to person center) + 2 (person center relative to court) + 2 (velocity) + 2 (acceleration) + 6 (ball, reserved) + 28 (14 court points × 2). Visual frame normalization is done on the GPU side; the CPU side keeps them as uint8 to save bandwidth.
 
-## 文件结构
+## File Structure
 
-| 文件 | 作用 |
+| File | Purpose |
 | --- | --- |
-| `model_main.py` | **模型定义** `MSTFormer`。三路视觉流 → 可选合并（`merge_visual_tokens`）→ 拼接姿态 token → Transformer → 双头输出。各开关：`use_pose` / `use_player_crops` / `use_visual` / `merge_visual_tokens` |
-| `dataset.py` | 数据集 `TennisActionDataset`。读 `pose_data.json` + `annotations.json`，滑动窗口切片，构建 125 维姿态向量与三路视觉帧；含图像增强 |
-| `train.py` | **训练入口**。联合训练动作分类 + 关键帧检测，AMP + 梯度累积，按视频划分 train/val，输出到 `models/action/<config>/<时间戳>/` |
-| `config.py` | YAML 配置解析器，把相对路径转绝对、补设备与梯度累积步数 |
-| `augment.py` | 异步图像增强缓冲区，把增强从 DataLoader worker 移到独立线程池 |
-| `extract_frames.py` | 预提取回合视频的全帧到 `frames/`（加速训练读图） |
-| `extract_crops.py` | 预提取 player1/player2 裁剪图到 `player1/`、`player2/` |
-| `run_ablation.py` | 批量跑 `configs/ablation`、`components`、`hyperparams` 下的实验 |
-| `modules/` | 模型子模块（见下） |
-| `tests/` | `eval_optimal.py`（评估+混淆矩阵）、`test_matrix.py`、`test_dataset.py` |
+| `model_main.py` | **Model definition**, `MSTFormer`. Three visual streams → optional merge (`merge_visual_tokens`) → concatenated with pose tokens → Transformer → dual-head output. Toggles: `use_pose` / `use_player_crops` / `use_visual` / `merge_visual_tokens` |
+| `dataset.py` | Dataset class `TennisActionDataset`. Reads `pose_data.json` + `annotations.json`, slices via sliding window, builds the 125-dimensional pose vector and the three visual frame streams; includes image augmentation |
+| `train.py` | **Training entry point.** Jointly trains action classification + keyframe detection, with AMP + gradient accumulation, splits train/val by video, outputs to `models/action/<config>/<timestamp>/` |
+| `config.py` | YAML config parser; converts relative paths to absolute, fills in device and gradient accumulation steps |
+| `augment.py` | Asynchronous image augmentation buffer; moves augmentation off the DataLoader worker and into a separate thread pool |
+| `extract_frames.py` | Pre-extracts full frames from rally videos into `frames/` (speeds up image reading during training) |
+| `extract_crops.py` | Pre-extracts player1/player2 crop images into `player1/`, `player2/` |
+| `run_ablation.py` | Batch-runs the experiments under `configs/ablation`, `components`, `hyperparams` |
+| `modules/` | Model submodules (see below) |
+| `tests/` | `eval_optimal.py` (evaluation + confusion matrix), `test_matrix.py`, `test_dataset.py` |
 
-### modules/ 子模块
+### modules/ Submodules
 
-| 文件 | 作用 |
+| File | Purpose |
 | --- | --- |
-| `backbone_factory.py` | 视觉骨干工厂，按 `visual_backbone` 配置构建下面四种之一 |
-| `yolo_extractor.py` | YOLO11 backbone 截取 P3/P4/P5，跨尺度注意力融合（主力） |
-| `resnet_extractor.py` | ResNet18 骨干（对比） |
-| `vit_extractor.py` | 轻量 ViT patch embedding（对比） |
-| `raw_extractor.py` | 原始像素投影（对比） |
-| `token_resampler.py` | Perceiver 风格 cross-attention，把任意数量 token 压到固定个数 |
-| `pos_encoding.py` | 正弦位置编码（默认关闭） |
-| `action_head.py` | 动作分类头 + 关键帧检测头 |
+| `backbone_factory.py` | Visual backbone factory; builds one of the four backbones below based on the `visual_backbone` config |
+| `yolo_extractor.py` | YOLO11 backbone, taps P3/P4/P5, cross-scale attention fusion (primary) |
+| `resnet_extractor.py` | ResNet18 backbone (comparison) |
+| `vit_extractor.py` | Lightweight ViT patch embedding (comparison) |
+| `raw_extractor.py` | Raw pixel projection (comparison) |
+| `token_resampler.py` | Perceiver-style cross-attention, compresses an arbitrary number of tokens down to a fixed count |
+| `pos_encoding.py` | Sinusoidal positional encoding (disabled by default) |
+| `action_head.py` | Action classification head + keyframe detection head |
 
-## 怎么训练
+## How to Train
 
 ```bash
-# 0) 准备：每个回合目录需有 pose_data.json + annotations.json
-#    可选预提取视觉数据（否则训练时从 raw_clip.mp4 实时解码，较慢）：
+# 0) Preparation: each rally directory needs pose_data.json + annotations.json
+#    Optionally pre-extract visual data (otherwise the raw_clip.mp4 is decoded on the fly
+#    during training, which is slower):
 python src/model/mst/extract_frames.py
 python src/model/mst/extract_crops.py
 
-# 1) 冒烟测试：1 条数据跑 1 轮，验证流水线通畅
+# 1) Smoke test: run 1 sample for 1 epoch to verify the pipeline works end to end
 python src/model/mst/train.py --config configs/main.yaml --smoke
 
-# 2) 正式训练（main.yaml 为当前最优基准）
+# 2) Full training (main.yaml is the current best baseline)
 python src/model/mst/train.py --config configs/main.yaml
 
-# 3) 评估 + 混淆矩阵
+# 3) Evaluation + confusion matrix
 python src/model/mst/tests/eval_optimal.py --config configs/main.yaml --weights <best.pth>
 
-# 4) 批量消融/超参/组件实验
+# 4) Batch ablation / hyperparameter / component experiments
 python src/model/mst/run_ablation.py
 ```
 
-配置说明见 [`configs/CONFIG_REFERENCE.md`](../../../configs/CONFIG_REFERENCE.md)。
+For configuration details, see [`configs/CONFIG_REFERENCE.md`](../../../configs/CONFIG_REFERENCE.md).

@@ -1,5 +1,5 @@
-﻿# 消融实验：去掉球员裁剪图（use_player_crops=false，仅全帧视觉 + 姿态）
-# 对比 main.yaml，量化 p1/p2 裁剪图的贡献
+﻿# Ablation Study: Remove player crops (use_player_crops=false, full-frame visual + pose only)
+# Comparison with main.yaml to quantify the contribution of p1/p2 player crops
 
 data_root: "data/rallies_train"
 crops_root: "data/rallies_train"
@@ -11,7 +11,7 @@ num_classes: 5
 class_weights: [1.0, 4.0, 5.0, 4.0, 1.5]
 
 use_visual: true
-use_player_crops: false          # ← 变量：不用裁剪图
+use_player_crops: false          # ← Variable: No player crops used
 use_pose: true
 use_pos_encoding: false
 visual_backbone: "yolo11"

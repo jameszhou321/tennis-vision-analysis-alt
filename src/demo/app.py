@@ -1,4 +1,4 @@
-"""app.py — 主窗口"""
+"""app.py — Main Window"""
 import os
 import json
 from PyQt5.QtWidgets import (
@@ -118,7 +118,7 @@ class MainWindow(QMainWindow):
     def __init__(self, rally_dir=None, config_path=None, weights_path=None,
                  person_model=None, pose_model=None):
         super().__init__()
-        self.setWindowTitle("网球动作识别 Demo")
+        self.setWindowTitle("Tennis Action Recognition Demo")
         self.setMinimumSize(1100, 760)
         self.setStyleSheet(STYLESHEET)
 
@@ -141,7 +141,7 @@ class MainWindow(QMainWindow):
         root.setContentsMargins(12, 12, 12, 12)
         root.setSpacing(8)
 
-        # 视频画面
+        # Video Frame Viewport
         self._video_label = QLabel()
         self._video_label.setAlignment(Qt.AlignCenter)
         self._video_label.setStyleSheet("background: #000; border-radius: 6px;")
@@ -149,7 +149,7 @@ class MainWindow(QMainWindow):
         self._video_label.setMinimumHeight(360)
         root.addWidget(self._video_label, stretch=1)
 
-        # 黑屏转圈覆盖层（加载视频时显示）
+        # Loading Spinner Overlay Cover Layer
         self._loading_label = QLabel(self._video_label)
         self._loading_label.setAlignment(Qt.AlignCenter)
         self._loading_label.setStyleSheet(
@@ -162,23 +162,23 @@ class MainWindow(QMainWindow):
         self._loading_timer.setInterval(400)
         self._loading_timer.timeout.connect(self._tick_loading)
 
-        # 时间轴面板
+        # Timeline Component Panel
         self._timeline = TimelinePanel()
         root.addWidget(self._timeline)
 
-        # 进度条
+        # Progress Slider Bar
         self._slider = QSlider(Qt.Horizontal)
         self._slider.setRange(0, 0)
         self._slider.sliderPressed.connect(self._player.pause)
         self._slider.sliderMoved.connect(self._player.seek)
         root.addWidget(self._slider)
 
-        # 播放控制行
+        # Playback Control Interface Bar
         ctrl = QHBoxLayout()
         ctrl.setSpacing(8)
-        self._btn_prev = _btn("◀ 上一帧", 90)
-        self._btn_play = _btn("▶ 播放", 90)
-        self._btn_next = _btn("下一帧 ▶", 90)
+        self._btn_prev = _btn("◀ Prev Frame", 110)
+        self._btn_play = _btn("▶ Play", 90)
+        self._btn_next = _btn("Next Frame ▶", 110)
         self._lbl_time = _label("00:00.000 / 00:00.000", _FONT_MONO, "#888")
         self._lbl_action = _label("—", _FONT, "#CCCCCC")
         self._lbl_action.setMinimumWidth(120)
@@ -193,40 +193,40 @@ class MainWindow(QMainWindow):
         ctrl.addSpacing(16)
         ctrl.addWidget(self._lbl_time)
         ctrl.addSpacing(16)
-        ctrl.addWidget(_label("当前预测：", _FONT_SMALL, "#888"))
+        ctrl.addWidget(_label("Current Prediction: ", _FONT_SMALL, "#888"))
         ctrl.addWidget(self._lbl_action)
         ctrl.addStretch()
         root.addLayout(ctrl)
 
-        # 分隔线
+        # Horizontal Divider Line
         line = QFrame()
         line.setFrameShape(QFrame.HLine)
         line.setStyleSheet("color: #2A2A3E;")
         root.addWidget(line)
 
-        # 文件选择行
+        # Directory File Picker Bar
         file_row = QHBoxLayout()
         file_row.setSpacing(6)
 
         self._edit_rally = QLineEdit(self._rally_dir)
-        self._edit_rally.setPlaceholderText("Rally 目录路径")
+        self._edit_rally.setPlaceholderText("Rally Directory Path")
         self._edit_rally.setFont(_FONT_SMALL)
-        btn_rally = _btn("选择 Rally", 90)
+        btn_rally = _btn("Select Rally", 100)
         btn_rally.clicked.connect(self._pick_rally)
 
         self._edit_cfg = QLineEdit(self._config_path)
-        self._edit_cfg.setPlaceholderText("配置 YAML 路径")
+        self._edit_cfg.setPlaceholderText("Config YAML Path")
         self._edit_cfg.setFont(_FONT_SMALL)
-        btn_cfg = _btn("选择配置", 80)
+        btn_cfg = _btn("Select Config", 110)
         btn_cfg.clicked.connect(self._pick_config)
 
         self._edit_weights = QLineEdit(self._weights_path)
-        self._edit_weights.setPlaceholderText("权重 .pth 路径")
+        self._edit_weights.setPlaceholderText("Weights .pth Path")
         self._edit_weights.setFont(_FONT_SMALL)
-        btn_w = _btn("选择权重", 80)
+        btn_w = _btn("Select Weights", 120)
         btn_w.clicked.connect(self._pick_weights)
 
-        self._btn_infer = _btn("▶ 开始推理", 100)
+        self._btn_infer = _btn("▶ Run Inference", 120)
         self._btn_infer.setStyleSheet(
             "QPushButton { background: #3A3A8A; border-color: #5555CC; }"
             "QPushButton:hover { background: #4A4AAA; }"
@@ -242,23 +242,23 @@ class MainWindow(QMainWindow):
         file_row.addWidget(self._btn_infer)
         root.addLayout(file_row)
 
-        # YOLO 模型行
+        # Optional YOLO Weights Selection Row
         yolo_row = QHBoxLayout()
         yolo_row.setSpacing(6)
 
         self._edit_person = QLineEdit(self._person_model)
-        self._edit_person.setPlaceholderText("person 检测模型 .pt（可选，不填则用 pose_data.json）")
+        self._edit_person.setPlaceholderText("person detection model .pt (Optional, falls back to pose_data.json if empty)")
         self._edit_person.setFont(_FONT_SMALL)
-        btn_person = _btn("选择 person", 90)
+        btn_person = _btn("Select Person", 110)
         btn_person.clicked.connect(self._pick_person)
 
         self._edit_pose = QLineEdit(self._pose_model)
-        self._edit_pose.setPlaceholderText("pose 估计模型 .pt（可选）")
+        self._edit_pose.setPlaceholderText("pose estimation model .pt (Optional)")
         self._edit_pose.setFont(_FONT_SMALL)
-        btn_pose = _btn("选择 pose", 80)
+        btn_pose = _btn("Select Pose", 100)
         btn_pose.clicked.connect(self._pick_pose)
 
-        yolo_row.addWidget(_label("YOLO：", _FONT_SMALL, "#888"))
+        yolo_row.addWidget(_label("YOLO: ", _FONT_SMALL, "#888"))
         yolo_row.addWidget(self._edit_person, 3)
         yolo_row.addWidget(btn_person)
         yolo_row.addWidget(self._edit_pose, 3)
@@ -266,21 +266,21 @@ class MainWindow(QMainWindow):
         yolo_row.addStretch()
         root.addLayout(yolo_row)
 
-        # 推理进度条 + 状态
+        # Thread Performance Status and Progress Bars
         status_row = QHBoxLayout()
         self._progress = QProgressBar()
         self._progress.setRange(0, 100)
         self._progress.setValue(0)
         self._progress.setFixedHeight(6)
-        self._lbl_status = _label("就绪", _FONT_SMALL, "#666")
+        self._lbl_status = _label("Ready", _FONT_SMALL, "#666")
         status_row.addWidget(self._progress, 1)
         status_row.addSpacing(8)
         status_row.addWidget(self._lbl_status)
         root.addLayout(status_row)
 
-        # 图例
+        # Color Legends
         legend = QHBoxLayout()
-        legend.addWidget(_label("图例：", _FONT_SMALL, "#666"))
+        legend.addWidget(_label("Legend: ", _FONT_SMALL, "#666"))
         for i, name in enumerate(ACTION_NAMES):
             c = ACTION_COLORS[i].name()
             dot = QLabel("■")
@@ -291,74 +291,74 @@ class MainWindow(QMainWindow):
         legend.addStretch()
         root.addLayout(legend)
 
-        # 如果启动时已传入参数，自动加载视频
+        # Automatically spin up clip file loaders if arguments were parsed
         if self._rally_dir:
             self._load_video()
 
-    # ── 文件选择 ──────────────────────────────────────────────
+    # ── File Dialog Selectors ─────────────────────────────────
 
     def _pick_rally(self):
-        d = QFileDialog.getExistingDirectory(self, "选择 Rally 目录", self._rally_dir or ".")
+        d = QFileDialog.getExistingDirectory(self, "Select Rally Directory", self._rally_dir or ".")
         if d:
             self._rally_dir = d
             self._edit_rally.setText(d)
             self._load_video()
 
     def _pick_config(self):
-        f, _ = QFileDialog.getOpenFileName(self, "选择配置文件", ".", "YAML (*.yaml *.yml)")
+        f, _ = QFileDialog.getOpenFileName(self, "Select Configuration Profile", ".", "YAML (*.yaml *.yml)")
         if f:
             self._config_path = f
             self._edit_cfg.setText(f)
 
     def _pick_weights(self):
-        f, _ = QFileDialog.getOpenFileName(self, "选择权重文件", ".", "PyTorch (*.pth *.pt)")
+        f, _ = QFileDialog.getOpenFileName(self, "Select Weight Matrix File", ".", "PyTorch (*.pth *.pt)")
         if f:
             self._weights_path = f
             self._edit_weights.setText(f)
 
     def _pick_person(self):
-        f, _ = QFileDialog.getOpenFileName(self, "选择 person 检测模型", ".", "YOLO (*.pt)")
+        f, _ = QFileDialog.getOpenFileName(self, "Select Person Detection Layer", ".", "YOLO (*.pt)")
         if f:
             self._person_model = f
             self._edit_person.setText(f)
 
     def _pick_pose(self):
-        f, _ = QFileDialog.getOpenFileName(self, "选择 pose 估计模型", ".", "YOLO (*.pt)")
+        f, _ = QFileDialog.getOpenFileName(self, "Select Pose Estimation Layer", ".", "YOLO (*.pt)")
         if f:
             self._pose_model = f
             self._edit_pose.setText(f)
 
-    # ── 视频加载 ──────────────────────────────────────────────
+    # ── Video Loading Handlers ────────────────────────────────
 
     def _load_video(self):
         video_path = os.path.join(self._rally_dir, "raw_clip.mp4")
         if not os.path.exists(video_path):
-            self._lbl_status.setText("未找到 raw_clip.mp4")
+            self._lbl_status.setText("Missing raw_clip.mp4 targets")
             return
         ok = self._player.load(video_path)
         if not ok:
-            self._lbl_status.setText("视频加载失败")
+            self._lbl_status.setText("Failed to safely stream target clip matrix")
             return
         total = self._player.total_frames
         self._slider.setRange(0, max(total - 1, 0))
-        self._lbl_status.setText(f"已加载视频：{total} 帧  {self._player.fps:.1f} fps")
+        self._lbl_status.setText(f"Loaded clip: {total} frames @ {self._player.fps:.1f} fps")
         self._player.seek(0)
 
-        # 加载 GT 标注
+        # Ingest Ground Truth structural tags
         anno_path = os.path.join(self._rally_dir, "annotations.json")
         if os.path.exists(anno_path):
             with open(anno_path, "r", encoding="utf-8") as f:
                 anno = json.load(f)
             self._timeline.load_gt(total, self._player.fps, anno)
 
-    # ── 播放控制 ──────────────────────────────────────────────
+    # ── Playback State Logic ──────────────────────────────────
 
     def _toggle_play(self):
         self._player.toggle()
-        self._btn_play.setText("⏸ 暂停" if self._player._playing else "▶ 播放")
+        self._btn_play.setText("⏸ Pause" if self._player._playing else "▶ Play")
 
     def _on_frame(self, frame_idx, rgb):
-        # 推理完成后优先显示带标注的帧
+        # Override baseline matrix loops with tracked arrays upon inference success
         if (self._result and "annotated_rgb" in self._result
                 and frame_idx < len(self._result["annotated_rgb"])):
             rgb = self._result["annotated_rgb"][frame_idx]
@@ -371,7 +371,7 @@ class MainWindow(QMainWindow):
             pix.scaled(label_size, Qt.KeepAspectRatio, Qt.SmoothTransformation)
         )
 
-        # 更新进度条和时间码
+        # Synchronize scrub bars and time stamps
         self._slider.blockSignals(True)
         self._slider.setValue(frame_idx)
         self._slider.blockSignals(False)
@@ -384,21 +384,21 @@ class MainWindow(QMainWindow):
             f"{int(cur_s//60):02d}:{cur_s%60:06.3f} / {int(tot_s//60):02d}:{tot_s%60:06.3f}"
         )
 
-        # 更新时间轴游标
+        # Shift timeline pointers
         self._timeline.set_cursor(frame_idx)
 
-        # 显示当前预测动作
+        # Direct current classification parameters into layout fields
         if self._result and frame_idx < len(self._result["per_frame_preds"]):
             pid = self._result["per_frame_preds"][frame_idx]
-            name = ACTION_NAMES[pid] if 0 <= pid < len(ACTION_NAMES) else "未知"
+            name = ACTION_NAMES[pid] if 0 <= pid < len(ACTION_NAMES) else "Unknown"
             color = ACTION_COLORS[pid].name() if 0 <= pid < len(ACTION_COLORS) else "#888"
             self._lbl_action.setText(name)
             self._lbl_action.setStyleSheet(f"color: {color}; font-weight: bold;")
 
     def _on_video_end(self):
-        self._btn_play.setText("▶ 播放")
+        self._btn_play.setText("▶ Play")
 
-    # ── 推理 ──────────────────────────────────────────────────
+    # ── Inference Execution ───────────────────────────────────
 
     def _start_inference(self):
         rally = self._edit_rally.text().strip()
@@ -406,22 +406,22 @@ class MainWindow(QMainWindow):
         weights = self._edit_weights.text().strip()
 
         if not rally or not os.path.isdir(rally):
-            self._lbl_status.setText("请先选择有效的 Rally 目录")
+            self._lbl_status.setText("Please select a valid Rally path directory link")
             return
         if not cfg or not os.path.exists(cfg):
-            self._lbl_status.setText("请选择配置 YAML 文件")
+            self._lbl_status.setText("Please point to valid YAML parameters profiles")
             return
         if not weights or not os.path.exists(weights):
-            self._lbl_status.setText("请选择模型权重文件")
+            self._lbl_status.setText("Please point to valid target checkpoint parameters .pth")
             return
 
         self._btn_infer.setEnabled(False)
         self._btn_play.setEnabled(False)
         self._progress.setValue(0)
 
-        # 黑屏转圈，预测条重置为未定义
+        # Drop viewports into blacked overlays and wipe historical data bars
         self._player.pause()
-        self._btn_play.setText("▶ 播放")
+        self._btn_play.setText("▶ Play")
         self._show_loading()
         self._timeline.reset_predictions()
 
@@ -429,9 +429,9 @@ class MainWindow(QMainWindow):
         pose   = self._edit_pose.text().strip()
 
         if person and pose:
-            self._lbl_status.setText("推理中（YOLO 实时检测）…")
+            self._lbl_status.setText("Inference executing (YOLO live detection streams)...")
         else:
-            self._lbl_status.setText("推理中（读取 pose_data.json）…")
+            self._lbl_status.setText("Inference executing (Parsing cached pose_data.json layers)...")
 
         self._inference_thread = InferenceThread(
             rally, cfg, weights,
@@ -446,7 +446,7 @@ class MainWindow(QMainWindow):
 
     def _on_infer_progress(self, pct):
         self._progress.setValue(pct)
-        self._lbl_status.setText(f"推理中… {pct}%")
+        self._lbl_status.setText(f"Processing matrices... {pct}%")
 
     def _on_infer_result(self, result):
         self._result = result
@@ -455,7 +455,7 @@ class MainWindow(QMainWindow):
         self._btn_play.setEnabled(True)
         self._progress.setValue(100)
         acc = result["accuracy"] * 100
-        self._lbl_status.setText(f"推理完成  准确率：{acc:.1f}%")
+        self._lbl_status.setText(f"Inference verified successfully — Model Accuracy Score: {acc:.1f}%")
 
         total = result["total_frames"]
         fps = result["fps"]
@@ -465,8 +465,8 @@ class MainWindow(QMainWindow):
         self._hide_loading()
         self._btn_infer.setEnabled(True)
         self._btn_play.setEnabled(True)
-        self._lbl_status.setText("推理出错，详见控制台")
-        print("[推理错误]\n", msg)
+        self._lbl_status.setText("Inference framework broken down. Inspect stdout terminal outputs.")
+        print("[INFERENCE ERROR]\n", msg)
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
@@ -474,7 +474,7 @@ class MainWindow(QMainWindow):
 
     def _tick_loading(self):
         dots = "●" * (self._loading_dots % 4 + 1) + "○" * (3 - self._loading_dots % 4)
-        self._loading_label.setText(f"加载中  {dots}")
+        self._loading_label.setText(f"Loading matrices  {dots}")
         self._loading_dots += 1
 
     def _show_loading(self):

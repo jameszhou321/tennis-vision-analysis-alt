@@ -1,5 +1,5 @@
-"""YOLO 单帧动作分类器 — 独立模块
+"""YOLO Single-Frame Action Classifier — Standalone Module
 
-不依赖 mst/ 下的任何代码
-用法: python train.py
+Does not depend on any code under mst/
+Usage: python train.py
 """

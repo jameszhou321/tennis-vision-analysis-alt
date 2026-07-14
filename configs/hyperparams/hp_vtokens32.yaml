@@ -1,5 +1,5 @@
-﻿# 超参实验：visual_tokens=32（增加视觉 token 数，更多视觉细节）
-# 对比 main.yaml（visual_tokens=16），序列长 120×(1+32)=3960
+﻿# Hyperparameter Experiment: visual_tokens=32 (Increased number of visual tokens, more visual details)
+# Compared against main.yaml (visual_tokens=16), sequence length: 120×(1+32)=3960
 
 data_root: "data/rallies_train"
 crops_root: "data/rallies_train"
@@ -20,7 +20,7 @@ backbone_weights: "models/yolo/yolo11n-pose.pt"
 unfreeze_backbone: true
 multi_scale_levels: [3, 4, 5]
 tokens_per_scale: 4
-visual_tokens: 32                # ← 变量
+visual_tokens: 32                # ← Variable
 merge_visual_tokens: true
 parallel_backbones: false
 

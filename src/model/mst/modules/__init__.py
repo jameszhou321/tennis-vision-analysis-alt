@@ -1,4 +1,4 @@
-"""MSTFormer 视觉 / 位置编码 / 分类头子模块。"""
+"""MSTFormer Visual / Positional Encoding / Classification Head Submodules."""
 from .yolo_extractor import Yolo11BackboneExtractor
 from .resnet_extractor import ResNet18BackboneExtractor
 from .raw_extractor import RawProjectionExtractor

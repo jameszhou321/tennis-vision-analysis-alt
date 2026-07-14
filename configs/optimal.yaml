@@ -1,21 +1,21 @@
-# 最优配置 — 基于 main.yaml，depth 从 8 降为 4
-# 推导依据: hp_depth4 实验 depth=4 收敛至 85.07%，与 depth=8 (85.37%) 差距 < 0.3%
-#           参数量减半，训练更快，精度持平
-# 用法: python src/model/mst/train.py --config configs/optimal.yaml
+# Optimal Configuration — Based on main.yaml, depth reduced from 8 to 4
+# Derivation Basis: The hp_depth4 experiment showed depth=4 converges to 85.07%, which is < 0.3% gap compared to depth=8 (85.37%)
+#                   Parameter count cut in half, faster training, performance holds even
+# Usage: python src/model/mst/train.py --config configs/optimal.yaml
 
-# ── 数据 ──────────────────────────────────────────────────────────────────────
+# ── Data ──────────────────────────────────────────────────────────────────────
 data_root: "data/rallies_train_trimmed"
 test_data_root: "data/rallies_train"
 crops_root: "data/rallies_train"
 seq_len: 120
 min_seq_len: 60
 reshuffle_augment: true
-image_augment: true       # 图像增强：颜色抖动/噪声/模糊/擦除/半透明覆盖
+image_augment: true       # Image augmentation: color jitter / noise / blur / erasing / semi-transparent overlays
 train_ratio: 0.8
 num_classes: 5
-class_weights: [0.9, 4.0, 5.0, 4.0, 1.5]  # 等待从63.7%→58.0%，权重微降
+class_weights: [0.9, 4.0, 5.0, 4.0, 1.5]  # Waiting for 63.7% → 58.0%, weight slightly reduced
 
-# ── 模型架构 ───────────────────────────────────────────────────────────────────
+# ── Model Architecture ──────────────────────────────────────────────────────────
 use_visual: true
 use_player_crops: true
 use_pose: true
@@ -30,13 +30,13 @@ visual_tokens: 16
 merge_visual_tokens: true
 parallel_backbones: false
 
-# ── 模型超参 ───────────────────────────────────────────────────────────────────
+# ── Model Hyperparameters ──────────────────────────────────────────────────────
 embed_dim: 128
-depth: 4                      # depth=4, 比 main.yaml 减半; 实验证明 4 与 8 精度持平
-num_heads: 2                    # 每头维度 128/2=64，长序列下每头容量更大
+depth: 4                      # depth=4, cut in half compared to main.yaml; experiments prove depth 4 and 8 maintain accuracy parity
+num_heads: 2                    # Dimension per head: 128/2=64, giving each head a larger capacity under long sequences
 dropout: 0.3
 
-# ── 训练 ───────────────────────────────────────────────────────────────────────
+# ── Training ───────────────────────────────────────────────────────────────────
 batch_size: 2
 virtual_batch_size: 64
 total_epochs: 100
@@ -46,7 +46,7 @@ warmup_epochs: 5
 loss: "cross_entropy"
 keyframe_loss_weight: 0.5
 
-# ── 硬件 ───────────────────────────────────────────────────────────────────────
+# ── Hardware ───────────────────────────────────────────────────────────────────
 num_workers: 2
 pin_memory: true
 transformer_checkpoint: true

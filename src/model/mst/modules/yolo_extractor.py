@@ -1,4 +1,4 @@
-"""yolo_extractor.py — YOLO backbone P3/P4/P5 多尺度特征提取器"""
+"""yolo_extractor.py — YOLO Backbone P3/P4/P5 Multi-Scale Feature Extractor"""
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -6,7 +6,7 @@ from torch.utils.checkpoint import checkpoint
 from ultralytics import YOLO
 from .token_resampler import TokenResampler
 
-# yolo11x-pose: P3=layer16(384ch), P4=layer19(768ch), P5=layer22(768ch)
+# yolo11x-pose configuration landscape: P3=layer16(384ch), P4=layer19(768ch), P5=layer22(768ch)
 _YOLO_CONFIGS = {
     "yolo11x": {
         "channels": {3: 384, 4: 768, 5: 768},
@@ -26,7 +26,7 @@ _YOLO_CONFIGS = {
     },
 }
 
-# 默认兼容旧配置
+# Default mappings maintained for legacy configuration backwards compatibility
 _YOLO11X_CHANNELS = _YOLO_CONFIGS["yolo11x"]["channels"]
 _YOLO11X_HOOK_LAYERS = _YOLO_CONFIGS["yolo11x"]["hook_layers"]
 
@@ -43,7 +43,10 @@ def _detect_yolo_variant(weights_path: str) -> str:
 
 
 def _run_layers(layers, save_set, x, y):
-    """按 YOLO _predict_once 逻辑逐层运行，更新 y 列表并返回最后输出。"""
+    """Executes network blocks sequentially mirroring the native YOLO _predict_once strategy.
+
+    Tracks inter-layer dependencies inside the 'y' array registry and yields the final feature map.
+    """
     for m in layers:
         if m.f != -1:
             x = y[m.f] if isinstance(m.f, int) else [x if j == -1 else y[j] for j in m.f]
@@ -53,11 +56,14 @@ def _run_layers(layers, save_set, x, y):
 
 
 class Yolo11BackboneExtractor(nn.Module):
-    """从 YOLO backbone 截取 P3/P4/P5 特征，通过跨尺度注意力融合后，
-    经 TokenResampler 输出固定 visual_tokens 个 token。
+    """Intercepts multi-scale P3/P4/P5 feature maps from standard YOLO backbone networks, 
 
-    支持 yolo11x-pose 和 yolov8n-pose，通过 weights_path 自动识别。
-    shared_backbone: 若传入已有实例则共享权重（节省显存），否则自行加载。
+    fuses cross-scale patterns via attention modules, and streams the outputs through 
+    a TokenResampler to emit a fixed number of visual_tokens.
+
+    Automatically identifies variations like yolo11x-pose and yolov8n-pose via weights_path parsing.
+    If a shared_backbone instance is supplied, parameters are reused directly to lower memory 
+    overhead; otherwise, the module handles loading internally.
     """
 
     def __init__(self, weights_path, scale_levels, tokens_per_scale, embed_dim,
@@ -89,7 +95,7 @@ class Yolo11BackboneExtractor(nn.Module):
                     param.requires_grad = False
             self._owns_backbone = True
 
-        # 按 P3/P4/P5 层索引把 backbone 切成三段，用于分段 checkpoint
+        # Segment backbone into three discrete parts using P3/P4/P5 boundary markers for activation checkpointing
         lvls = sorted(scale_levels)
         all_layers = list(self.backbone.model)
         p3_idx = self._hook_layers[lvls[0]]
@@ -100,7 +106,7 @@ class Yolo11BackboneExtractor(nn.Module):
             all_layers[p3_idx + 1 : p4_idx + 1],
             all_layers[p4_idx + 1 : p5_idx + 1],
         ]
-        self._save_set = self.backbone.save  # YOLO 内部需要缓存的层索引集合
+        self._save_set = self.backbone.save  # Cache tracking lookups required internally by YOLO architecture
         self._p_idxs = (p3_idx, p4_idx, p5_idx)
         self._lvls = lvls
 
@@ -114,8 +120,11 @@ class Yolo11BackboneExtractor(nn.Module):
         self.resampler = TokenResampler(embed_dim, num_out=visual_tokens)
 
     def _forward_backbone(self, x):
-        """分三段运行 backbone，解冻时每段用 checkpoint 节省显存。"""
-        y = []  # 与 YOLO _predict_once 的 y 列表对应
+        """Passes tensor through backbone split segments, applying activation checkpointing 
+
+        when unfreezing parameters to save GPU memory overhead.
+        """
+        y = []  # Mirrors the standard internal cache tracker array of YOLO's _predict_once loop
 
         def seg0(x):
             return _run_layers(self._seg_layers[0], self._save_set, x, y)
@@ -143,7 +152,7 @@ class Yolo11BackboneExtractor(nn.Module):
         }
 
     def forward(self, x):
-        # 只在训练模式下开梯度，eval 时始终 no_grad
+        # Allow gradients only when explicitly configured to train an unfrozen backbone
         ctx = torch.enable_grad() if (self.unfreeze_backbone and self.training) else torch.no_grad()
         with ctx:
             feats = self._forward_backbone(x)

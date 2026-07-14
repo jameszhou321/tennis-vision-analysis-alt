@@ -1,8 +1,8 @@
-# 最优配置 — 全量数据训练（带图像增强）
-# 基于 optimal.yaml，改用 data/rallies_train 全量数据
-# 用法: python src/model/mst/train.py --config configs/optimal_full.yaml
+# Optimal Configuration — Full Dataset Training (with Image Augmentation)
+# Based on optimal.yaml, switched to using data/rallies_train full dataset
+# Usage: python src/model/mst/train.py --config configs/optimal_full.yaml
 # data_root: "data/rallies_train"
-# test_data_root: (无) — 自动从 data_root 按 train_ratio 划分
+# test_data_root: (None) — Automatically split from data_root based on train_ratio
 # seq_len: 120
 # min_seq_len: 60
 # reshuffle_augment: true
@@ -21,7 +21,7 @@ train_ratio: 0.8
 num_classes: 5
 class_weights: [0.9, 4.0, 5.0, 4.0, 1.5]
 
-# ── 模型架构 ──
+# ── Model Architecture ──
 use_visual: true
 use_player_crops: true
 use_pose: true
@@ -36,13 +36,13 @@ visual_tokens: 16
 merge_visual_tokens: true
 parallel_backbones: false
 
-# ── 模型超参 ──
+# ── Model Hyperparameters ──
 embed_dim: 128
 depth: 4
 num_heads: 2
 dropout: 0.3
 
-# ── 训练 ──
+# ── Training ──
 batch_size: 2
 virtual_batch_size: 64
 total_epochs: 100
@@ -52,7 +52,7 @@ warmup_epochs: 5
 loss: "cross_entropy"
 keyframe_loss_weight: 0.5
 
-# ── 硬件 ──
+# ── Hardware ──
 num_workers: 4
 pin_memory: true
 transformer_checkpoint: true

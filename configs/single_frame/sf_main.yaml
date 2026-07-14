@@ -1,18 +1,18 @@
-# 单帧版本 — 基于 main.yaml，将 seq_len 改为 1，消融时序信息的影响
-# 对比 main.yaml 可知时序上下文对动作识别的重要性
-# 用法: python src/model/mst/train.py --config configs/single_frame/sf_main.yaml
+# Single-frame version — based on main.yaml, changes seq_len to 1 to ablate the impact of temporal information
+# Comparing this with main.yaml reveals the importance of temporal context for action recognition
+# Usage: python src/model/mst/train.py --config configs/single_frame/sf_main.yaml
 
-# ── 数据 ──────────────────────────────────────────────────────────────────────
+# ── Data ──────────────────────────────────────────────────────────────────────
 data_root: "data/rallies_train"
 crops_root: "data/rallies_train"
-seq_len: 1                    # 单帧，无时序上下文
+seq_len: 1                    # Single frame, no temporal context
 min_seq_len: 1
-reshuffle_augment: false      # 单帧无需 reshuffle，每个帧独立
+reshuffle_augment: false      # No reshuffle needed for single frame, each frame is independent
 train_ratio: 0.8
 num_classes: 5
 class_weights: [1.0, 4.0, 5.0, 4.0, 1.5]
 
-# ── 模型架构 ───────────────────────────────────────────────────────────────────
+# ── Model Architecture ──────────────────────────────────────────────────────────
 use_visual: true
 use_player_crops: true
 use_pose: true
@@ -27,16 +27,16 @@ visual_tokens: 16
 merge_visual_tokens: true
 parallel_backbones: false
 
-# ── 模型超参 ───────────────────────────────────────────────────────────────────
+# ── Model Hyperparameters ──────────────────────────────────────────────────────
 embed_dim: 128
 depth: 8
 num_heads: 4
 dropout: 0.3
 
-# ── 训练 ───────────────────────────────────────────────────────────────────────
-# seq_len=1 时每帧独立，可以加大 batch_size
-# 原 main.yaml batch_size=2, virtual_batch_size=64 (seq_len=120)
-# 现在每帧计算量约为主配置的 1/8（transformer 部分节省，backbone 不变）
+# ── Training ───────────────────────────────────────────────────────────────────
+# When seq_len=1 each frame is independent, so batch_size can be increased
+# Original main.yaml had batch_size=2, virtual_batch_size=64 (seq_len=120)
+# Now the computation per frame is roughly 1/8 of the main config (transformer part is saved, backbone remains the same)
 batch_size: 32
 virtual_batch_size: 64
 total_epochs: 60
@@ -45,9 +45,9 @@ weight_decay: 0.05
 warmup_epochs: 5
 loss: "focal"
 focal_gamma: 2.0
-keyframe_loss_weight: 0.0     # 单帧无关键帧概念，关闭关键帧 loss
+keyframe_loss_weight: 0.0     # No concept of keyframes in single frame, disable keyframe loss
 
-# ── 硬件 ───────────────────────────────────────────────────────────────────────
+# ── Hardware ───────────────────────────────────────────────────────────────────
 num_workers: 2
 pin_memory: true
 transformer_checkpoint: true

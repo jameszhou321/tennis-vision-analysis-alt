@@ -1,5 +1,5 @@
-﻿# 超参实验：visual_tokens=8（减少视觉 token 数，更强压缩）
-# 对比 main.yaml（visual_tokens=16），序列长 120×(1+8)=1080
+﻿# Hyperparameter Experiment: visual_tokens=8 (Reduced number of visual tokens, stronger compression)
+# Compared against main.yaml (visual_tokens=16), sequence length: 120×(1+8)=1080
 
 data_root: "data/rallies_train"
 crops_root: "data/rallies_train"
@@ -20,7 +20,7 @@ backbone_weights: "models/yolo/yolo11n-pose.pt"
 unfreeze_backbone: true
 multi_scale_levels: [3, 4, 5]
 tokens_per_scale: 4
-visual_tokens: 8                 # ← 变量
+visual_tokens: 8                 # ← Variable
 merge_visual_tokens: true
 parallel_backbones: false
 

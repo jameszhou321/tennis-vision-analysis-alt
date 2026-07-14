@@ -1,16 +1,16 @@
-"""timeline.py — 时间轴组件：GT条 / 预测条 / 帧格子条"""
+"""timeline.py — Timeline components: GT tracks / Prediction tracks / Frame grid cells"""
 from PyQt5.QtWidgets import QWidget, QScrollArea, QVBoxLayout, QLabel, QSizePolicy
 from PyQt5.QtCore import Qt, QRect
 from PyQt5.QtGui import QPainter, QColor, QFont, QPen
 
 ACTION_COLORS = [
-    QColor("#607D8B"),  # 0 待机
-    QColor("#4CAF50"),  # 1 正手
-    QColor("#2196F3"),  # 2 反手
-    QColor("#FF9800"),  # 3 发球
-    QColor("#9C27B0"),  # 4 移动
+    QColor("#607D8B"),  # 0 Idle
+    QColor("#4CAF50"),  # 1 Forehand
+    QColor("#2196F3"),  # 2 Backhand
+    QColor("#FF9800"),  # 3 Serve
+    QColor("#9C27B0"),  # 4 Movement
 ]
-ACTION_NAMES = ["待机", "正手", "反手", "发球", "移动"]
+ACTION_NAMES = ["Idle", "Forehand", "Backhand", "Serve", "Movement"]
 COLOR_UNKNOWN = QColor("#37474F")
 COLOR_BG = QColor("#1E1E2E")
 COLOR_CURSOR = QColor("#FFFFFF")
@@ -23,7 +23,7 @@ def _action_color(action_id):
 
 
 class ActionBarWidget(QWidget):
-    """GT 标注条或模型预测条，按时间比例绘制彩色区间块。"""
+    """GT annotation track or model prediction track, drawing colored interval blocks proportional to time."""
 
     def __init__(self, label, parent=None):
         super().__init__(parent)
@@ -54,7 +54,7 @@ class ActionBarWidget(QWidget):
         if self._total_frames == 0:
             p.setPen(QColor("#555"))
             p.setFont(QFont("Microsoft YaHei", 8))
-            p.drawText(QRect(0, 0, w, h), Qt.AlignCenter, f"{self._label}（未加载）")
+            p.drawText(QRect(0, 0, w, h), Qt.AlignCenter, f"{self._label} (Not Loaded)")
             return
 
         for seg in self._segments:
@@ -64,7 +64,7 @@ class ActionBarWidget(QWidget):
 
         p.setFont(QFont("Microsoft YaHei", 7))
         p.setPen(QColor("#CCCCCC"))
-        p.drawText(QRect(4, 0, 60, h), Qt.AlignVCenter | Qt.AlignLeft, self._label)
+        p.drawText(QRect(4, 0, 80, h), Qt.AlignVCenter | Qt.AlignLeft, self._label)
 
         cx = int(self._cursor / max(self._total_frames, 1) * w)
         p.setPen(QPen(COLOR_CURSOR, 1))
@@ -76,18 +76,18 @@ class ActionBarWidget(QWidget):
         frame = int(event.x() / self.width() * self._total_frames)
         for seg in self._segments:
             if seg["start"] <= frame <= seg["end"]:
-                name = ACTION_NAMES[seg["action_id"]] if 0 <= seg["action_id"] < len(ACTION_NAMES) else "未知"
+                name = ACTION_NAMES[seg["action_id"]] if 0 <= seg["action_id"] < len(ACTION_NAMES) else "Unknown"
                 self.setToolTip(
-                    f"{self._label}：{name}\n"
-                    f"帧 {seg['start']}–{seg['end']}  "
+                    f"{self._label}: {name}\n"
+                    f"Frame {seg['start']}–{seg['end']}  "
                     f"({seg['start']/self._fps:.2f}s – {seg['end']/self._fps:.2f}s)"
                 )
                 return
-        self.setToolTip(f"帧 {frame}  ({frame/self._fps:.2f}s)")
+        self.setToolTip(f"Frame {frame}  ({frame/self._fps:.2f}s)")
 
 
 class FrameTrackWidget(QWidget):
-    """帧格子条：每格一帧，彩色，随播放滚动。"""
+    """Frame grid track: one cell per frame, color-coded, scrolls during video playback."""
     CELL_W = 5
     CELL_H = 24
 
@@ -124,7 +124,7 @@ class FrameTrackWidget(QWidget):
 
 
 class TimelinePanel(QWidget):
-    """完整时间轴面板：GT条 + 预测条 + 帧格子条（带横向滚动）"""
+    """Complete timeline panel: GT track + Prediction track + Frame grid track (with horizontal scrolling)"""
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -132,13 +132,13 @@ class TimelinePanel(QWidget):
         layout.setContentsMargins(0, 4, 0, 4)
         layout.setSpacing(3)
 
-        self.gt_bar = ActionBarWidget("GT 标注")
+        self.gt_bar = ActionBarWidget("GT Ground Truth")
         layout.addWidget(self.gt_bar)
 
-        self.pred_bar = ActionBarWidget("模型预测")
+        self.pred_bar = ActionBarWidget("Model Prediction")
         layout.addWidget(self.pred_bar)
 
-        lbl = QLabel("帧轨道")
+        lbl = QLabel("Frame Track Viewport")
         lbl.setFont(QFont("Microsoft YaHei", 8))
         lbl.setStyleSheet("color: #888; padding-left: 4px;")
         layout.addWidget(lbl)
@@ -154,7 +154,7 @@ class TimelinePanel(QWidget):
         layout.addWidget(self._scroll)
 
     def load_gt(self, total_frames, fps, anno_json):
-        """从 annotations.json 解析 GT 区间并渲染。"""
+        """Parses GT intervals from annotations.json and triggers rendering paths."""
         segments = []
         for seg in (anno_json if isinstance(anno_json, list) else []):
             start_f = round(seg.get("start_time", 0) * fps)
@@ -163,8 +163,8 @@ class TimelinePanel(QWidget):
         self.gt_bar.set_data(total_frames, fps, segments)
 
     def load_predictions(self, total_frames, fps, per_frame_preds):
-        """per_frame_preds: list[int]，长度 == total_frames，每帧的预测类别。"""
-        # 将逐帧预测压缩成区间段
+        """per_frame_preds: list[int], length == total_frames, predicted category index per frame."""
+        # Compress frame-by-frame predictions into discrete interval segments
         segments = []
         if per_frame_preds:
             cur_id = per_frame_preds[0]
@@ -180,18 +180,18 @@ class TimelinePanel(QWidget):
         self.frame_track.set_data(total_frames, per_frame_preds)
 
     def reset_predictions(self):
-        """切换 rally 时清空预测条，显示"未定义"。"""
+        """Clears the prediction track allocations when switching to a different rally data target."""
         self.pred_bar.set_data(0, 30.0, [])
         self.frame_track.set_data(0, [])
 
     def reset_gt(self):
-        """切换 rally 时清空 GT 条。"""
+        """Clears the GT track tracks when switching to a different rally data target."""
         self.gt_bar.set_data(0, 30.0, [])
 
     def set_cursor(self, frame_idx):
         self.gt_bar.set_cursor(frame_idx)
         self.pred_bar.set_cursor(frame_idx)
         self.frame_track.set_cursor(frame_idx)
-        # 自动滚动帧格子条，使当前帧居中
+        # Scroll the frame track horizontally to center the active frame index cursor
         scroll_x = frame_idx * FrameTrackWidget.CELL_W - self._scroll.viewport().width() // 2
         self._scroll.horizontalScrollBar().setValue(max(0, scroll_x))
