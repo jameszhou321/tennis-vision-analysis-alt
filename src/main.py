@@ -1,8 +1,9 @@
-"""main.py — Hybrid Tennis Match Kinematics & Scene Analyzer
+"""main.py — Hybrid Tennis Match Kinematics & Scene Analyzer with Automated Slicing & Compilation
 
 Features:
+- Slices detected rallies instantly using FFmpeg native copy to './src/data/rallies_new/<video_name>/'
+- Automatically compiles all sliced rallies into a single consolidated 'all_rallies_combined.mp4' file.
 - Dual Modes: Static Fence-cam (robust box center kinematics) and Broadcast (CLIP scene cuts).
-- Zero-Bloat: Stripped out noisy frame annotator steps, writing outputs cleanly to the terminal.
 - Device Agnostic: Automatically leverages Apple Silicon (MPS) or CUDA where available.
 """
 import cv2
@@ -12,6 +13,7 @@ import os
 import time
 import torch
 import logging
+import subprocess
 from PIL import Image
 from ultralytics import YOLO
 
@@ -37,6 +39,95 @@ def format_timestamp(seconds):
     m = int((seconds % 3600) // 60)
     s = int(seconds % 60)
     return f"{h:02d}:{m:02d}:{s:02d}"
+
+
+def timestamp_to_seconds(ts_str):
+    """Converts an HH:MM:SS string back to float seconds."""
+    parts = ts_str.split(':')
+    if len(parts) == 3:
+        return float(parts[0]) * 3600 + float(parts[1]) * 60 + float(parts[2])
+    return 0.0
+
+
+def slice_and_combine_rallies(video_path, timeline, output_dir):
+    """Slices playing blocks into individual clips and compiles them into one final video."""
+    os.makedirs(output_dir, exist_ok=True)
+    
+    playing_blocks = [b for b in timeline if b["status"] == "PLAYING (Rally)"]
+    if not playing_blocks:
+        print("  ℹ️ No playing rally blocks detected to slice.")
+        return
+
+    sliced_files = []
+    print(f"\n🎬 Slicing {len(playing_blocks)} rally clips into: '{output_dir}/'...")
+    
+    for idx, block in enumerate(playing_blocks):
+        start_sec = timestamp_to_seconds(block["start"])
+        end_sec = timestamp_to_seconds(block["end"])
+        duration = end_sec - start_sec
+
+        # Guard against zero-duration or negative slices
+        if duration <= 1.0:
+            continue
+
+        clean_ts = block["start"].replace(":", "-")
+        output_filename = os.path.join(output_dir, f"rally_{idx+1:03d}_{clean_ts}.mp4")
+
+        # Fast lossless stream-copy using FFmpeg
+        command = [
+            "ffmpeg", "-y",
+            "-ss", f"{start_sec:.3f}",
+            "-i", video_path,
+            "-t", f"{duration:.3f}",
+            "-c", "copy",
+            output_filename
+        ]
+
+        try:
+            subprocess.run(command, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
+            print(f"  💾 Saved clip {idx+1:02d}: {os.path.basename(output_filename)} [{block['start']} -> {block['end']}]")
+            sliced_files.append(output_filename)
+        except FileNotFoundError:
+            print("  ❌ Error: 'ffmpeg' binary not found. Please run 'brew install ffmpeg'.")
+            return
+        except subprocess.CalledProcessError:
+            print(f"  ⚠️ Failed to slice clip {idx+1} at {block['start']}")
+
+    # Combine all individual clips into a single compilation file
+    if len(sliced_files) > 1:
+        print(f"\n🔗 Concatenating {len(sliced_files)} clips into a single reel...")
+        concat_list_path = os.path.join(output_dir, "concat_list.txt")
+        combined_output_path = os.path.join(output_dir, "all_rallies_combined.mp4")
+
+        try:
+            # Generate the FFmpeg demuxer list text file
+            with open(concat_list_path, "w", encoding="utf-8") as f:
+                for file_path in sliced_files:
+                    # Use absolute paths or escaping to prevent space path issues on FFmpeg
+                    escaped_path = os.path.abspath(file_path).replace("'", "'\\''")
+                    f.write(f"file '{escaped_path}'\n")
+
+            # Run FFmpeg concatenation demuxer
+            concat_command = [
+                "ffmpeg", "-y",
+                "-f", "concat",
+                "-safe", "0",
+                "-i", concat_list_path,
+                "-c", "copy",
+                combined_output_path
+            ]
+            subprocess.run(concat_command, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
+            print(f"  🏆 Success! Combined video created: {os.path.basename(combined_output_path)}")
+        
+        except subprocess.CalledProcessError:
+            print("  ⚠️ Failed to compile the combined reel.")
+        finally:
+            # Clean up the temporary demuxer file
+            if os.path.exists(concat_list_path):
+                try:
+                    os.remove(concat_list_path)
+                except OSError:
+                    pass
 
 
 class RobustKinematicDetector:
@@ -77,6 +168,7 @@ class BatchTennisPipeline:
     def __init__(self, mode="static"):
         self.mode = mode  # "static" or "broadcast"
         self.input_dir = config.VIDEO_PATH
+        self.rallies_output_root = "./src/data/rallies_new"
         self.device = get_acceleration_device()
         
         self.video_files = sorted([f for f in os.listdir(self.input_dir) if f.lower().endswith('.mp4')])
@@ -199,6 +291,8 @@ class BatchTennisPipeline:
     def run(self):
         for idx, video_file in enumerate(self.video_files):
             video_path = os.path.join(self.input_dir, video_file)
+            video_name = os.path.splitext(video_file)[0]
+            
             print(f"\n========================================================")
             print(f"🔍 Analyzing Match ({idx + 1}/{len(self.video_files)}): {video_file}")
             print(f"========================================================")
@@ -212,7 +306,6 @@ class BatchTennisPipeline:
             print("-" * 50)
             rally_count = 0
             for block in timeline:
-                # FIX: Check for the exact status string to ignore "NON-PLAYING"
                 if block["status"] == "PLAYING (Rally)":
                     rally_count += 1
                     print(f"  🎾 Rally {rally_count:02d}: {block['start']} ---> {block['end']}")
@@ -221,8 +314,12 @@ class BatchTennisPipeline:
                 print("  ℹ️ No continuous rallies found in this match.")
             print("-" * 50)
 
+            # Slices, compiles, and saves everything to src/data/rallies_new/<video_name>/
+            match_output_dir = os.path.join(self.rallies_output_root, video_name)
+            slice_and_combine_rallies(video_path, timeline, match_output_dir)
+
 
 if __name__ == '__main__':
-    # You can quickly swap between modes here: "static" (fence-cam) or "broadcast" (TV footage)
+    # Toggle between modes here: "static" (fence-cam) or "broadcast" (TV footage)
     pipeline = BatchTennisPipeline(mode="broadcast")
     pipeline.run()
