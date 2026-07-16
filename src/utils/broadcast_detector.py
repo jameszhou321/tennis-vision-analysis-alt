@@ -1,5 +1,5 @@
 """
-spatial_rally_detector.py — Spatial Rally Detection Engine
+broadcast_detector.py — Spatial Rally Detection Engine
 
 Function: Detects tennis rallies based on the spatial physics of the ball 
           and positional distribution of players.
