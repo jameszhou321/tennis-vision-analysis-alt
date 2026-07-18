@@ -1,9 +1,12 @@
-"""main.py — Hybrid Tennis Match Kinematics & Scene Analyzer with Automated Slicing & Compilation
+"""main.py — Hybrid Tennis Match Kinematics & Scene Analyzer with Automated Slicing, Compilation & Pose Annotation
 
 Features:
 - Slices detected rallies instantly using FFmpeg native copy to './src/data/rallies_new/<video_name>/'
 - Automatically compiles all sliced rallies into a single consolidated 'all_rallies_combined.mp4' file.
 - Dual Modes: Static Fence-cam (robust box center kinematics) and Broadcast (CLIP scene cuts).
+- Optionally re-renders every cut rally clip with near/far player pose skeletons overlaid
+  (near_player + far_player ROIs via CourtDetector, keypoints via PoseTracker), producing
+  'rally_XXX_..._annotated.mp4' files plus 'all_rallies_combined_annotated.mp4'.
 - Device Agnostic: Automatically leverages Apple Silicon (MPS) or CUDA where available.
 """
 import cv2
@@ -18,6 +21,8 @@ from PIL import Image
 from ultralytics import YOLO
 
 import config_legacy as config
+from pose_tracker import PoseTracker
+from court_detector import CourtDetector
 
 # Block internal third-party logging noise
 logging.getLogger("ultralytics").setLevel(logging.ERROR)
@@ -49,14 +54,46 @@ def timestamp_to_seconds(ts_str):
     return 0.0
 
 
+def concat_videos(file_paths, combined_output_path, label="reel"):
+    """Concatenates a list of video files (stream-copy) into one file using FFmpeg's concat demuxer."""
+    if len(file_paths) <= 1:
+        return
+    concat_list_path = os.path.join(os.path.dirname(combined_output_path), f"concat_list_{label}.txt")
+    try:
+        with open(concat_list_path, "w", encoding="utf-8") as f:
+            for file_path in file_paths:
+                escaped_path = os.path.abspath(file_path).replace("'", "'\\''")
+                f.write(f"file '{escaped_path}'\n")
+
+        concat_command = [
+            "ffmpeg", "-y",
+            "-f", "concat",
+            "-safe", "0",
+            "-i", concat_list_path,
+            "-c", "copy",
+            combined_output_path
+        ]
+        subprocess.run(concat_command, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
+        print(f"  🏆 Success! Combined video created: {os.path.basename(combined_output_path)}")
+    except subprocess.CalledProcessError:
+        print(f"  ⚠️ Failed to compile the combined '{label}' reel.")
+    finally:
+        if os.path.exists(concat_list_path):
+            try:
+                os.remove(concat_list_path)
+            except OSError:
+                pass
+
+
 def slice_and_combine_rallies(video_path, timeline, output_dir):
-    """Slices playing blocks into individual clips and compiles them into one final video."""
+    """Slices playing blocks into individual clips and compiles them into one final video.
+    Returns the list of sliced clip filepaths (empty list if none were produced)."""
     os.makedirs(output_dir, exist_ok=True)
     
     playing_blocks = [b for b in timeline if b["status"] == "PLAYING (Rally)"]
     if not playing_blocks:
         print("  ℹ️ No playing rally blocks detected to slice.")
-        return
+        return []
 
     sliced_files = []
     print(f"\n🎬 Slicing {len(playing_blocks)} rally clips into: '{output_dir}/'...")
@@ -96,38 +133,63 @@ def slice_and_combine_rallies(video_path, timeline, output_dir):
     # Combine all individual clips into a single compilation file
     if len(sliced_files) > 1:
         print(f"\n🔗 Concatenating {len(sliced_files)} clips into a single reel...")
-        concat_list_path = os.path.join(output_dir, "concat_list.txt")
         combined_output_path = os.path.join(output_dir, "all_rallies_combined.mp4")
+        concat_videos(sliced_files, combined_output_path, label="raw")
 
-        try:
-            # Generate the FFmpeg demuxer list text file
-            with open(concat_list_path, "w", encoding="utf-8") as f:
-                for file_path in sliced_files:
-                    # Use absolute paths or escaping to prevent space path issues on FFmpeg
-                    escaped_path = os.path.abspath(file_path).replace("'", "'\\''")
-                    f.write(f"file '{escaped_path}'\n")
+    return sliced_files
 
-            # Run FFmpeg concatenation demuxer
-            concat_command = [
-                "ffmpeg", "-y",
-                "-f", "concat",
-                "-safe", "0",
-                "-i", concat_list_path,
-                "-c", "copy",
-                combined_output_path
-            ]
-            subprocess.run(concat_command, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
-            print(f"  🏆 Success! Combined video created: {os.path.basename(combined_output_path)}")
-        
-        except subprocess.CalledProcessError:
-            print("  ⚠️ Failed to compile the combined reel.")
-        finally:
-            # Clean up the temporary demuxer file
-            if os.path.exists(concat_list_path):
-                try:
-                    os.remove(concat_list_path)
-                except OSError:
-                    pass
+
+def annotate_rally_clip(clip_path, output_path, pose_model):
+    """Re-renders a single cut rally clip with near/far player pose skeletons overlaid.
+
+    Reuses CourtDetector (court-line ROI split) + PoseTracker (pose inference, EMA
+    smoothing, gap-filling, and keypoint/box drawing) — both originally written
+    'for use by main.py' but previously never wired in.
+
+    Frames where the court can't be detected (e.g. broadcast close-ups/replays) are
+    written through unannotated rather than dropped, so gaps degrade gracefully.
+    """
+    cap = cv2.VideoCapture(clip_path)
+    if not cap.isOpened():
+        print(f"  ⚠️ Could not open clip for annotation: {os.path.basename(clip_path)}")
+        return False
+
+    fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
+    width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+    height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+
+    court_detector = CourtDetector()
+    pose_tracker = PoseTracker(pose_model)
+    far_state = {"box": None, "kpts": None, "miss": 0}
+    near_state = {"box": None, "kpts": None, "miss": 0}
+
+    out = cv2.VideoWriter(output_path, cv2.VideoWriter_fourcc(*"mp4v"), fps, (width, height))
+
+    frame_idx = 0
+    while cap.isOpened():
+        ret, frame = cap.read()
+        if not ret:
+            break
+
+        annotated_frame = frame.copy()
+        far_roi, near_roi = court_detector.get_rois(frame, width, height)
+
+        if far_roi is not None:
+            fx1, fy1, fx2, fy2 = far_roi
+            far_crop = frame[fy1:fy2, fx1:fx2]
+            pose_tracker.process_and_smooth(far_crop, fx1, fy1, True, far_state, annotated_frame)
+
+        if near_roi is not None:
+            nx1, ny1, nx2, ny2 = near_roi
+            near_crop = frame[ny1:ny2, nx1:nx2]
+            pose_tracker.process_and_smooth(near_crop, nx1, ny1, False, near_state, annotated_frame)
+
+        out.write(annotated_frame)
+        frame_idx += 1
+
+    cap.release()
+    out.release()
+    return frame_idx > 0
 
 
 class RobustKinematicDetector:
@@ -165,17 +227,53 @@ class RobustKinematicDetector:
 
 
 class BatchTennisPipeline:
-    def __init__(self, mode="static"):
+    def __init__(self, mode="static", annotate=True):
         self.mode = mode  # "static" or "broadcast"
+        self.annotate = annotate  # whether to render pose-annotated versions of cut rally clips
         self.input_dir = config.VIDEO_PATH
         self.rallies_output_root = "./src/data/rallies_new"
         self.device = get_acceleration_device()
-        
+        self._pose_model = None  # lazy-loaded, only if annotate=True and rallies were found
+
         self.video_files = sorted([f for f in os.listdir(self.input_dir) if f.lower().endswith('.mp4')])
         if not self.video_files:
             raise FileNotFoundError(f"No mp4 files found in {self.input_dir}!")
 
-        print(f"🚀 Initialized Pipeline | Mode: {self.mode.upper()} | Device: {self.device.upper()}")
+        print(f"🚀 Initialized Pipeline | Mode: {self.mode.upper()} | Device: {self.device.upper()} | Pose Annotation: {'ON' if self.annotate else 'OFF'}")
+
+    def get_pose_model(self):
+        """Lazily loads (once) the pose model used for annotating cut rally clips."""
+        if self._pose_model is None:
+            print(f"⏳ Loading pose model: {config.MODEL_PATH}")
+            self._pose_model = YOLO(config.MODEL_PATH)
+            self._pose_model.to(self.device)
+        return self._pose_model
+
+    def annotate_all_rallies(self, sliced_files, match_output_dir):
+        """Renders a pose-annotated version of each cut rally clip, plus a combined annotated reel."""
+        if not sliced_files:
+            return
+
+        annotated_dir = os.path.join(match_output_dir, "annotated")
+        os.makedirs(annotated_dir, exist_ok=True)
+        pose_model = self.get_pose_model()
+
+        print(f"\n🦴 Annotating {len(sliced_files)} rally clips with player pose overlays...")
+        annotated_files = []
+        for idx, clip_path in enumerate(sliced_files):
+            clip_name = os.path.splitext(os.path.basename(clip_path))[0]
+            output_path = os.path.join(annotated_dir, f"{clip_name}_annotated.mp4")
+            ok = annotate_rally_clip(clip_path, output_path, pose_model)
+            if ok:
+                print(f"  🦴 Annotated clip {idx+1:02d}: {os.path.basename(output_path)}")
+                annotated_files.append(output_path)
+            else:
+                print(f"  ⚠️ Failed to annotate: {os.path.basename(clip_path)}")
+
+        if len(annotated_files) > 1:
+            print(f"\n🔗 Concatenating {len(annotated_files)} annotated clips into a single reel...")
+            combined_output_path = os.path.join(annotated_dir, "all_rallies_combined_annotated.mp4")
+            concat_videos(annotated_files, combined_output_path, label="annotated")
 
     def process_broadcast_clip(self, video_path):
         """Broadcast Mode: Segment camera shots and classify via zero-shot CLIP."""
@@ -316,10 +414,15 @@ class BatchTennisPipeline:
 
             # Slices, compiles, and saves everything to src/data/rallies_new/<video_name>/
             match_output_dir = os.path.join(self.rallies_output_root, video_name)
-            slice_and_combine_rallies(video_path, timeline, match_output_dir)
+            sliced_files = slice_and_combine_rallies(video_path, timeline, match_output_dir)
+
+            # Optionally re-render each cut rally clip with pose skeleton overlays
+            if self.annotate:
+                self.annotate_all_rallies(sliced_files, match_output_dir)
 
 
 if __name__ == '__main__':
     # Toggle between modes here: "static" (fence-cam) or "broadcast" (TV footage)
-    pipeline = BatchTennisPipeline(mode="broadcast")
+    # Toggle annotate=False to skip pose-overlay rendering and only cut/combine rallies.
+    pipeline = BatchTennisPipeline(mode="broadcast", annotate=True)
     pipeline.run()
