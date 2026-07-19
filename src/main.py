@@ -166,25 +166,30 @@ def annotate_rally_clip(clip_path, output_path, pose_model):
     out = cv2.VideoWriter(output_path, cv2.VideoWriter_fourcc(*"mp4v"), fps, (width, height))
 
     frame_idx = 0
+    prev_gray = None
     while cap.isOpened():
         ret, frame = cap.read()
         if not ret:
             break
 
+        curr_gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
         annotated_frame = frame.copy()
         far_roi, near_roi = court_detector.get_rois(frame, width, height)
 
         if far_roi is not None:
             fx1, fy1, fx2, fy2 = far_roi
             far_crop = frame[fy1:fy2, fx1:fx2]
-            pose_tracker.process_and_smooth(far_crop, fx1, fy1, True, far_state, annotated_frame)
+            pose_tracker.process_and_smooth(far_crop, fx1, fy1, True, far_state, annotated_frame,
+                                             prev_gray_frame=prev_gray, curr_gray_frame=curr_gray)
 
         if near_roi is not None:
             nx1, ny1, nx2, ny2 = near_roi
             near_crop = frame[ny1:ny2, nx1:nx2]
-            pose_tracker.process_and_smooth(near_crop, nx1, ny1, False, near_state, annotated_frame)
+            pose_tracker.process_and_smooth(near_crop, nx1, ny1, False, near_state, annotated_frame,
+                                             prev_gray_frame=prev_gray, curr_gray_frame=curr_gray)
 
         out.write(annotated_frame)
+        prev_gray = curr_gray
         frame_idx += 1
 
     cap.release()

@@ -13,10 +13,15 @@ class PoseTracker:
         self.alpha = config.POSE_ALPHA
         self.max_gap = config.POSE_MAX_GAP
 
-    def process_and_smooth(self, crop_img, offset_x, offset_y, is_far, history_state, annotated_frame):
+    def process_and_smooth(self, crop_img, offset_x, offset_y, is_far, history_state, annotated_frame,
+                            prev_gray_frame=None, curr_gray_frame=None):
         """
-        Performs model inference, multi-dimensional scoring (Y-axis bottom priority + X-axis inertia), 
-        data smoothing, and keypoint rendering.
+        Performs model inference, multi-dimensional scoring (Y-axis bottom priority + X-axis inertia +
+        court proximity + local motion), data smoothing, and keypoint rendering.
+
+        prev_gray_frame / curr_gray_frame: optional full-frame grayscale images (previous and current
+        frame of the source clip) used to compute a per-candidate local motion score. Pass both to
+        enable it; omit to fall back to a neutral prior (e.g. on the very first frame).
         """
         new_box, new_kpts = None, None
 
@@ -59,15 +64,37 @@ class PoseTracker:
                     # The closer the feet are to the bottom of the ROI (roi_h), the closer y_score is to 1.0.
                     y_score = by2 / roi_h
 
+                    # 3. Court Proximity Score (soft, NOT a hard cutoff): players routinely leave the
+                    # sideline area to chase wide balls, so this decays gradually with distance from the
+                    # ROI's court centerline rather than rejecting anything outside a fixed boundary.
+                    # Unlike x_score, this is independent of tracking history, so it doesn't compound
+                    # drift if the tracker has already locked onto the wrong person.
+                    court_cx = roi_w / 2.0
+                    court_dist = abs(person_cx - court_cx)
+                    prox_score = max(0.0, 1.0 - (court_dist / (roi_w * 0.6)))
+
+                    # 4. Local Motion Score: players are almost always moving mid-rally (running,
+                    # swinging, adjusting footwork); officials and ball kids are comparatively static
+                    # frame-to-frame. Measures how much this candidate's own patch of the frame changed
+                    # since the previous frame. Neutral (0.5) if no previous frame is available yet.
+                    gx1 = int(bx1 + offset_x)
+                    gy1 = int(by1 + offset_y)
+                    gx2 = int(bx2 + offset_x)
+                    gy2 = int(by2 + offset_y)
+                    motion_score = self._local_motion_score(prev_gray_frame, curr_gray_frame, gx1, gy1, gx2, gy2)
+
                     # ==========================================
                     # Customized Weight Assignment
                     # ==========================================
                     if is_far:
-                        # Far end strategy: 50% on bottom proximity, 30% on tracking inertia, and 20% on YOLO confidence.
-                        score = conf * 0.2 + y_score * 0.5 + x_score * 0.3
+                        # Far end strategy: bottom proximity still weighted highest (perspective makes
+                        # this reliable), with confidence, tracking inertia, court proximity, and motion
+                        # rounding out the score.
+                        score = conf * 0.15 + y_score * 0.25 + x_score * 0.20 + prox_score * 0.20 + motion_score * 0.20
                     else:
-                        # Near end strategy: Distinct features, 50% on confidence and 50% on tracking inertia.
-                        score = conf * 0.5 + x_score * 0.5
+                        # Near end strategy: confidence and tracking inertia remain primary (distinct
+                        # features up close), with court proximity and motion as secondary tie-breakers.
+                        score = conf * 0.30 + x_score * 0.30 + prox_score * 0.20 + motion_score * 0.20
 
                     if score > max_score:
                         max_score = score
@@ -134,3 +161,27 @@ class PoseTracker:
             return {"bbox": final_box, "keypoints": final_kpts}
 
         return None
+
+    def _local_motion_score(self, prev_gray_frame, curr_gray_frame, gx1, gy1, gx2, gy2):
+        """Returns ~0-1: how much this candidate box's own patch of the frame changed since the
+        previous frame. Used to down-weight static bystanders (officials, ball kids) relative to
+        players, who are almost always moving during an active rally clip."""
+        if prev_gray_frame is None or curr_gray_frame is None:
+            return 0.5  # neutral prior when no previous frame is available (e.g. first frame)
+
+        h, w = curr_gray_frame.shape[:2]
+        gx1, gy1 = max(0, gx1), max(0, gy1)
+        gx2, gy2 = min(w, gx2), min(h, gy2)
+        if gx2 <= gx1 or gy2 <= gy1:
+            return 0.0
+
+        prev_patch = prev_gray_frame[gy1:gy2, gx1:gx2]
+        curr_patch = curr_gray_frame[gy1:gy2, gx1:gx2]
+        if prev_patch.size == 0 or curr_patch.size == 0 or prev_patch.shape != curr_patch.shape:
+            return 0.0
+
+        diff = cv2.absdiff(curr_patch, prev_patch)
+        raw = float(np.mean(diff)) / 255.0
+        # Scale factor is a tunable heuristic: typical player motion produces a mean pixel diff of only
+        # a few percent, so this stretches that into a more usable 0-1 range. Tune against real footage.
+        return min(1.0, raw * 6.0)
