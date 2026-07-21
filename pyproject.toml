@@ -10,6 +10,7 @@ dependencies = [
     "opencv-python>=5.0.0.93",
     "pillow>=12.3.0",
     "scenedetect>=0.7",
+    "scipy>=1.17.1",
     "torch>=2.13.0",
     "transformers>=5.13.1",
     "ultralytics>=8.4.94",

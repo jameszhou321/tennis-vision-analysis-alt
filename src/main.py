@@ -539,5 +539,5 @@ if __name__ == '__main__':
     # Toggle between modes here: "static" (fence-cam), "broadcast" (TV footage via CLIP scene
     # classification), or "fusion" (audio impact + player motion + ball activity, weighted).
     # Toggle annotate=False to skip pose-overlay rendering and only cut/combine rallies.
-    pipeline = BatchTennisPipeline(mode="fusion", annotate=True)
+    pipeline = BatchTennisPipeline(mode="broadcast", annotate=True)
     pipeline.run()
