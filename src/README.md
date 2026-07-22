@@ -8,10 +8,14 @@ This directory contains all the source code for the tennis match vision analysis
 
 | File | Purpose | Usage |
 | --- | --- | --- |
-| `main.py` | Batch video processing main entry point: iterates over `videos/`, a CPU thread scans the court and cuts rallies while a GPU thread runs pose tracking, outputting each rally's `raw_clip.mp4` / `annotated_clip.mp4` / `pose_data.json`, with resume support | `python src/main.py` |
+| `main.py` | Batch video-processing entry point: segments each match into rallies (three interchangeable modes — `"static"` player-box velocity, `"broadcast"` CLIP scene classification, or `"fusion"` audio+motion+ball), cuts + FFmpeg-concatenates rally clips into `data/rallies_new/<video_name>/`, and (if `annotate=True`) re-renders each clip with pose skeleton + ball trail overlays into an `annotated/` subfolder | `python src/main.py` |
 | `config_legacy.py` | Configuration for `main.py` (video/output/model paths, confidence, EMA parameters, etc.) — change paths and thresholds here | Imported by `main.py`, `pose_tracker.py` |
-| `court_detector.py` | Court ROI detector used during the scanning stage: uses Hough line detection to quickly determine whether a court is present in the frame and frames the far/near-side regions (lightweight, not the keypoint model) | Called by `main.py` |
-| `pose_tracker.py` | Pose tracker: runs YOLO-pose within the ROI, uses multi-dimensional scoring to identify the actual players, includes EMA smoothing and dropped-frame compensation | Called by `main.py` |
+| `court_detector.py` | Court ROI detector used during pose annotation: uses Hough line detection to quickly determine whether a court is present in the frame and frames the far/near-side regions (lightweight, not the keypoint model) | Called by `main.py` |
+| `pose_tracker.py` | Pose tracker: runs YOLO-pose within the ROI, uses multi-term scoring (confidence, tracking inertia, court proximity, local motion) to identify the actual players over officials/ball kids, includes EMA smoothing and dropped-frame compensation | Called by `main.py` |
+| `ball_tracker.py` | Classical CV ball tracker: background subtraction + circular-blob filtering + Kalman-filtered trajectory. No setup required; the default fallback backend | Called by `main.py` |
+| `ball_tracker_tracknet.py` | TrackNet-backed ball tracker wrapper — same interface as `ball_tracker.py` but higher accuracy. Requires `tracknet/` model files + pretrained weights to be downloaded manually (see repo root [README](../README.md#optional-tracknet-ball-tracking-backend)) | Called by `main.py` when `BALL_TRACKER_BACKEND = "tracknet"` |
+| `audio_video_fusion.py` | Band-pass filtered audio impact (onset) detection + a WAITING/POINT_ACTIVE hysteresis state machine, fusing audio + player-motion + ball-activity scores into rally boundaries | Called by `main.py`'s `process_fusion_clip()` (`mode="fusion"`) |
+| `tracknet/` | TrackNet model architecture files (`model.py`, `general.py`), downloaded from the [upstream repo](https://github.com/yastrebksv/TrackNet) rather than authored here — not tracked the same way as the rest of this codebase | Imported by `ball_tracker_tracknet.py` |
 | `train_court_pipeline.py` | Training entry point for the court **14-keypoint** detection model (YOLO-pose fine-tuning), also exports bad cases for iteration | `python src/train_court_pipeline.py` |
 | `test_person_detector.py` | Quick test script for the person detection/classification model | `python src/test_person_detector.py` |
 
@@ -30,7 +34,7 @@ This directory contains all the source code for the tennis match vision analysis
 
 ```
 A. Data production line (from video to training samples)
-   videos/ ──main.py──▶ data/rallies_new/ (rally clips + pose_data.json)
+   videos/ ──main.py──▶ data/rallies_new/ (rally clips, + annotated/ overlays if enabled)
                           │
                           ├─ utils/action_annotator.py ─▶ label actions annotations.json
                           └─ model/mst/extract_crops.py ─▶ player crop images player1/ player2/
