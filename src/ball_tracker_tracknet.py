@@ -15,6 +15,15 @@ TrackNet takes 3 consecutive frames (current + previous 2) stacked as a 9-channe
 fixed 640x360 resolution, and outputs a heatmap indicating ball position. This wrapper keeps a
 rolling 3-frame buffer, runs inference each call, and converts the heatmap back to a (x, y)
 position in the original frame's coordinate space.
+
+Outlier rejection: the vendored postprocess() uses a very permissive Hough-circle accumulator
+threshold (param2=2), so it will occasionally return a "detection" from a weak/ambiguous blob
+(court lines, a player's shoe, glare) even when the model isn't actually confident about the
+ball. Left unchecked, one of these gets accepted as a real position and drawn as a long straight
+jump in the trail. MAX_PLAUSIBLE_JUMP_PX rejects any detection that implies the ball teleported
+an implausible distance since the last known good position, treating it as a miss instead --
+this also keeps a single bad frame from spiking ball_activity_score (which feeds directly into
+process_fusion_clip's active_score in main.py).
 """
 import os
 from collections import deque
@@ -33,6 +42,13 @@ except ImportError:
 TRACKNET_WEIGHTS_PATH = os.path.join(os.path.dirname(__file__), "models", "tracknet", "model_best.pt")
 TRACKNET_INPUT_WIDTH = 640
 TRACKNET_INPUT_HEIGHT = 360
+
+# A ball can't teleport frame-to-frame -- any detection implying a jump larger than this (in
+# pixels, at the source frame's resolution) since the last known good position is treated as
+# noise rather than a real position. This is a blunt, resolution/fps-agnostic first pass; tune
+# it against your own footage, or better, scale it by fps once you have real numbers to trust
+# (max realistic ball speed * frame interval).
+MAX_PLAUSIBLE_JUMP_PX = 120
 
 
 class TrackNetBallTracker:
@@ -70,6 +86,16 @@ class TrackNetBallTracker:
         inp = np.expand_dims(imgs, axis=0)
         return torch.from_numpy(inp).float().to(self.device)
 
+    def _miss_result(self):
+        """Shared bookkeeping for anything treated as a miss, whether the model returned no
+        detection at all or returned one that failed the plausibility check below."""
+        self.miss_count += 1
+        if self.miss_count > self.max_miss:
+            self.trail.clear()
+            self.last_position = None
+        ball_activity_score = max(0.0, 0.3 - 0.05 * self.miss_count)
+        return {"position": None, "speed": 0.0, "ball_activity_score": ball_activity_score}
+
     def update(self, frame):
         """Processes one frame. Returns {"position": (x,y) or None, "speed": float, "ball_activity_score": float}."""
         self.frame_buffer.appendleft(frame)
@@ -90,30 +116,30 @@ class TrackNetBallTracker:
         x_pred, y_pred = tracknet_postprocess(output, scale=1)  # unscale ourselves below (non-square scale)
 
         if x_pred is None or y_pred is None:
-            self.miss_count += 1
-            position = None
-            ball_activity_score = max(0.0, 0.3 - 0.05 * self.miss_count)
-            speed = 0.0
+            return self._miss_result()
+
+        gx, gy = float(x_pred) * scale_x, float(y_pred) * scale_y
+        candidate = (int(gx), int(gy))
+
+        if self.last_position is not None:
+            dx = candidate[0] - self.last_position[0]
+            dy = candidate[1] - self.last_position[1]
+            jump = (dx ** 2 + dy ** 2) ** 0.5
+            if jump > MAX_PLAUSIBLE_JUMP_PX:
+                # Physically implausible jump -- almost certainly a spurious detection (court
+                # line, shoe, glare), not the real ball. Treat as a miss rather than accepting
+                # it and drawing a long straight streak across the trail.
+                return self._miss_result()
+            speed = jump
         else:
-            gx, gy = float(x_pred) * scale_x, float(y_pred) * scale_y
-            position = (int(gx), int(gy))
-            self.miss_count = 0
+            speed = 0.0
 
-            if self.last_position is not None:
-                dx = position[0] - self.last_position[0]
-                dy = position[1] - self.last_position[1]
-                speed = (dx ** 2 + dy ** 2) ** 0.5
-            else:
-                speed = 0.0
-
-            self.last_position = position
-            self.trail.append(position)
-            # Divisor is an unvalidated placeholder — calibrate against real footage.
-            ball_activity_score = min(1.0, speed / 25.0)
-
-        if position is None and self.miss_count > self.max_miss:
-            self.trail.clear()
-            self.last_position = None
+        position = candidate
+        self.miss_count = 0
+        self.last_position = position
+        self.trail.append(position)
+        # Divisor is an unvalidated placeholder — calibrate against real footage.
+        ball_activity_score = min(1.0, speed / 25.0)
 
         return {"position": position, "speed": speed, "ball_activity_score": ball_activity_score}
 
