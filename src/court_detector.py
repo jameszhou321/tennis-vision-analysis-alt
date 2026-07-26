@@ -1,119 +1,137 @@
 """court_detector.py — Court Detector (for use by main.py)
 
-Function: Encapsulates YOLO tennis court keypoint detection, providing the CourtDetector class interface.
-Fix: Added a robust Hough Transform line unpacking guard to prevent Unpack errors caused by anomalous data dimensions.
+Function: Detects the tennis court's 14 standard keypoints per frame with a YOLO
+keypoint model and fits a weighted pixel<->real-world (meters) homography from them.
+
+This is what pose_tracker.py uses to project player positions into real-world court
+coordinates, which is what lets it tell an actual far-side player apart from a chair
+umpire/line judge standing near the net -- see PoseTracker.select_players for why.
+
+Replaces the older Hough-line "ROI split" approach. That approach worked entirely in
+pixel space: the far-side ROI necessarily extended down to the net (to keep a far
+player near their own baseline in frame), and the scoring in pose_tracker.py rewarded
+candidates near the *bottom* of that ROI to avoid picking up crowd/stands near the
+top -- which is exactly backwards for a stationary official who always sits at the
+bottom of that box. Real-world coordinates sidestep this: a court-side official is
+simply too far from either baseline to ever win the far/near slot, without needing a
+referee-specific exception, and it's robust to camera zoom/angle changes since
+nothing is measured in raw pixels.
 """
 import cv2
 import numpy as np
+from scipy.optimize import least_squares
+
+import config_legacy as config
+
+# Standard physical coordinates (meters, net center = origin) for the court model's 14
+# keypoints, in the index order the model was trained/annotated with. Same table as
+# src/pipeline/offline_tennis_tracker.py / generate_trajectory.py.
+COURT_14_PTS_PHYSICAL = np.array([
+    [-5.485, -11.885], [5.485, -11.885], [5.485, 11.885], [-5.485, 11.885],
+    [0.000, -11.885], [0.000, 11.885],
+    [-4.115, -6.400], [4.115, -6.400], [0.000, -6.400],
+    [-4.115, 6.400], [4.115, 6.400], [0.000, 6.400],
+    [-5.485, 0.000], [5.485, 0.000]
+], dtype=np.float32)
+
+# Physical line segments, for optional debug/visual overlay of the projected court lines.
+COURT_LINES_PHYSICAL = [
+    ([-5.485, -11.885], [5.485, -11.885]), ([-5.485, 11.885], [5.485, 11.885]),
+    ([-5.485, -11.885], [-5.485, 11.885]), ([5.485, -11.885], [5.485, 11.885]),
+    ([-4.115, -11.885], [-4.115, 11.885]), ([4.115, -11.885], [4.115, 11.885]),
+    ([-4.115, -6.400], [4.115, -6.400]), ([-4.115, 6.400], [4.115, 6.400]),
+    ([0.000, -6.400], [0.000, 6.400]), ([-5.485, 0.000], [5.485, 0.000])
+]
+
+# Corner/T-points weighted higher than net-strap/service-line points: they anchor the
+# homography's extremities and tend to be detected more reliably.
+BASE_WEIGHTS = np.array([7, 7, 7, 7, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3], dtype=np.float32)
+
+
+def _reprojection_residuals(h_elements, src_pts, dst_pts, weights):
+    H = np.append(h_elements, 1.0).reshape(3, 3)
+    src_pts_3d = np.concatenate([src_pts, np.ones((len(src_pts), 1))], axis=1)
+    proj_pts_3d = (H @ src_pts_3d.T).T
+    proj_pts_3d[:, 2] = np.where(proj_pts_3d[:, 2] == 0, 1e-7, proj_pts_3d[:, 2])
+    return (((proj_pts_3d[:, :2] / proj_pts_3d[:, 2:]) - dst_pts) * weights[:, np.newaxis]).flatten()
+
+
+def get_weighted_homography(phys_pts, pixel_pts, weights):
+    """RANSAC seed + Levenberg-Marquardt refinement, weighted by keypoint confidence and
+    structural importance (BASE_WEIGHTS). Returns None if too few points to fit."""
+    H_init, _ = cv2.findHomography(phys_pts, pixel_pts, cv2.RANSAC, 5.0)
+    if H_init is None:
+        return None
+    res = least_squares(_reprojection_residuals, x0=(H_init / H_init[2, 2]).flatten()[:8],
+                         args=(phys_pts, pixel_pts, weights), method='lm')
+    return np.append(res.x, 1.0).reshape(3, 3)
+
+
+class HomographyFilter:
+    """Smooths the homography matrix across frames (rolling mean) so a single noisy
+    keypoint detection doesn't cause a jump in projected player coordinates."""
+
+    def __init__(self, history_len=None):
+        self.history_len = history_len or config.HOMOGRAPHY_HISTORY
+        self.history = []
+
+    def update(self, new_H):
+        if new_H is None:
+            return None
+        self.history.append(new_H)
+        if len(self.history) > self.history_len:
+            self.history.pop(0)
+        s_H = np.mean(self.history, axis=0)
+        return s_H / s_H[2, 2]
 
 
 class CourtDetector:
-    def __init__(self, scale=0.5):
-        self.scale = scale
+    def __init__(self, model):
+        """model: a pre-loaded YOLO court-keypoint model (see config.COURT_MODEL_PATH).
+        Loading is left to the caller (main.py lazy-loads it once, same pattern as the
+        pose model) so a new CourtDetector per clip doesn't reload weights each time."""
+        self.model = model
+        self.filter = HomographyFilter()
+        self._last_H = None
 
-    def get_rois(self, frame, width, height):
+    def estimate_homography(self, frame):
+        """Detects the 14 court keypoints in `frame` and returns a temporally-smoothed
+        pixel->real-world (meters) homography H, or None if the court has never been
+        detected yet this clip.
+
+        If this particular frame's court isn't detected (e.g. a broadcast close-up or
+        replay), the last known smoothed H is returned unchanged rather than dropping
+        straight to None -- matches the "gaps degrade gracefully" behavior the rest of
+        this pipeline already relies on, instead of losing player tracking on every
+        single missed frame.
         """
-        Extracts court edges and returns the ROI coordinates for the far end and near end.
-        """
-        small_frame = cv2.resize(frame, (0, 0), fx=self.scale, fy=self.scale)
-        gray = cv2.cvtColor(small_frame, cv2.COLOR_BGR2GRAY)
-        _, thresh = cv2.threshold(gray, 180, 255, cv2.THRESH_BINARY)
-        edges = cv2.Canny(thresh, 50, 150)
+        res = self.model.predict(frame, conf=0.3, verbose=False)[0]
 
-        h, w = small_frame.shape[:2]
-        min_line_len = int(w * 0.15)
-        lines = cv2.HoughLinesP(edges, 1, np.pi / 180, 50, minLineLength=min_line_len, maxLineGap=20)
+        if res.keypoints is not None and len(res.keypoints.data) > 0:
+            v_px, v_ph, v_w = [], [], []
+            for i, (x, y, conf) in enumerate(res.keypoints.data[0].cpu().numpy()):
+                if conf > config.COURT_KPT_CONF:
+                    v_px.append([x, y])
+                    v_ph.append(COURT_14_PTS_PHYSICAL[i])
+                    v_w.append(BASE_WEIGHTS[i] * conf)
 
-        if lines is None:
-            return None, None
+            if len(v_px) >= 4:
+                raw_H = get_weighted_homography(np.array(v_ph, dtype=np.float32),
+                                                 np.array(v_px, dtype=np.float32),
+                                                 np.array(v_w, dtype=np.float32))
+                if raw_H is not None:
+                    self._last_H = self.filter.update(raw_H)
 
-        horizontals, left_lines, right_lines = [], [], []
+        return self._last_H
 
-        for line in lines:
-            # =====================================================================
-            # Enhanced Unpacking Guard: Ensure only valid line segments matching 
-            # the [x1, y1, x2, y2] format are parsed.
-            # =====================================================================
-            try:
-                if len(line.shape) == 1 and len(line) == 4:
-                    x1, y1, x2, y2 = line
-                elif len(line) > 0 and len(line[0]) == 4:
-                    x1, y1, x2, y2 = line[0]
-                else:
-                    continue  # Skip structural noise data anomalies
-            except (TypeError, IndexError, ValueError):
-                continue  # Catch any potential unpacking exceptions to ensure multithreading does not crash
-            # =====================================================================
-
-            if y1 < h * 0.3 or y2 < h * 0.3 or y1 > h * 0.9 or y2 > h * 0.9:
-                continue
-            if y1 < y2:
-                x1, y1, x2, y2 = x2, y2, x1, y1
-
-            dx, dy = x2 - x1, y2 - y1
-            if dx == 0:
-                continue
-
-            angle = np.degrees(np.arctan2(dy, dx))
-            if -15 <= angle <= 5 or -180 <= angle <= -165:
-                horizontals.append((x1, y1, x2, y2))
-            elif -80 <= angle <= -35:
-                left_lines.append((x1, y1, x2, y2))
-            elif -145 <= angle <= -100:
-                right_lines.append((x1, y1, x2, y2))
-
-        if len(horizontals) >= 1 and len(left_lines) >= 1 and len(right_lines) >= 1:
-            all_y = [p[1] for line in horizontals + left_lines + right_lines for p in
-                     ((line[0], line[1]), (line[2], line[3]))]
-            c_y_min = max(int(h * 0.35), min(all_y))
-            c_y_max = min(int(h * 0.85), max(all_y))
-            c_h = c_y_max - c_y_min
-
-            if c_h > h * 0.1:
-                tl_x, tr_x = self._get_x(left_lines, c_y_min), self._get_x(right_lines, c_y_min)
-                bl_x, br_x = self._get_x(left_lines, c_y_max), self._get_x(right_lines, c_y_max)
-
-                if None not in (tl_x, tr_x, bl_x, br_x):
-                    net_candidates = []
-                    for x1, y1, x2, y2 in horizontals:
-                        avg_y = (y1 + y2) / 2
-                        if c_y_min + c_h * 0.35 < avg_y < c_y_min + c_h * 0.55:
-                            net_candidates.append((avg_y, abs(x2 - x1)))
-
-                    if net_candidates:
-                        net_candidates.sort(key=lambda x: x[1], reverse=True)
-                        net_y = net_candidates[0][0]
-                    else:
-                        net_y = c_y_min + c_h * 0.45
-
-                    # Extend upwards by 80% of the court height to ensure the far player fits completely into the ROI
-                    f_y1 = max(0, c_y_min - c_h * 0.8)
-
-                    f_y2 = net_y + 15 * self.scale
-                    f_x1_b = self._get_x(left_lines, net_y) or tl_x
-                    f_x2_b = self._get_x(right_lines, net_y) or tr_x
-                    f_x1, f_x2 = f_x1_b, f_x2_b
-
-                    # Near end ROI
-                    n_y1 = net_y - 15 * self.scale
-                    n_y2 = min(h, c_y_max + c_h * 0.3)
-                    n_x1_b = self._get_x(left_lines, c_y_max) or bl_x
-                    n_x2_b = self._get_x(right_lines, c_y_max) or br_x
-                    nw = n_x2_b - n_x1_b
-                    n_x1, n_x2 = n_x1_b - nw * 0.1, n_x2_b + nw * 0.1
-
-                    def scale_box(box):
-                        return [max(0, int(v / self.scale)) for v in box]
-
-                    far_roi = scale_box([f_x1, f_y1, f_x2, f_y2])
-                    near_roi = scale_box([n_x1, n_y1, n_x2, n_y2])
-
-                    far_roi = [far_roi[0], far_roi[1], min(width, far_roi[2]), min(height, far_roi[3])]
-                    near_roi = [near_roi[0], near_roi[1], min(width, near_roi[2]), min(height, near_roi[3])]
-
-                    return far_roi, near_roi
-        return None, None
-
-    def _get_x(self, lines_list, ty):
-        xs = [x1 + (ty - y1) * (x2 - x1) / (y2 - y1) for x1, y1, x2, y2 in lines_list if y1 != y2]
-        return np.median(xs) if xs else None
+    def draw_lines(self, frame, H, color=(0, 255, 0)):
+        """Optional debug overlay: projects the physical court lines through H onto frame.
+        Handy for visually sanity-checking a fitted homography while tuning."""
+        if H is None:
+            return
+        for p1, p2 in COURT_LINES_PHYSICAL:
+            pts = np.array([p1, p2], dtype=np.float32).reshape(-1, 1, 2)
+            proj = cv2.perspectiveTransform(pts, H)
+            pt1 = (int(proj[0][0][0]), int(proj[0][0][1]))
+            pt2 = (int(proj[1][0][0]), int(proj[1][0][1]))
+            cv2.line(frame, pt1, pt2, color, 1, cv2.LINE_AA)

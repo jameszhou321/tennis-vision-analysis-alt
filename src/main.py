@@ -7,8 +7,11 @@ Features:
   and Fusion (audio impact + player motion + ball activity, weighted through a hysteresis state
   machine — see audio_video_fusion.py). Fusion mode reuses the same player-motion detector as
   static mode and the ball tracker (TrackNet or heuristic) as a third fused signal.
-- Optionally re-renders every cut rally clip with near/far player pose skeletons overlaid
-  (near_player + far_player ROIs via CourtDetector, keypoints via PoseTracker), producing
+- Optionally re-renders every cut rally clip with near/far player pose skeletons overlaid.
+  CourtDetector fits a per-frame pixel<->real-world court homography (14-pt keypoint model),
+  and PoseTracker full-frame-tracks every person then picks the far/near player by whichever
+  track spends the most time near a baseline in real-world coordinates -- this is what keeps
+  the chair umpire/line judges near the net from being mistaken for the far player. Produces
   'rally_XXX_..._annotated.mp4' files plus 'all_rallies_combined_annotated.mp4'.
 - Device Agnostic: Automatically leverages Apple Silicon (MPS) or CUDA where available.
 """
@@ -191,15 +194,26 @@ def slice_and_combine_rallies(video_path, timeline, output_dir):
     return sliced_files
 
 
-def annotate_rally_clip(clip_path, output_path, pose_model):
+def annotate_rally_clip(clip_path, output_path, pose_model, court_model):
     """Re-renders a single cut rally clip with near/far player pose skeletons overlaid.
 
-    Reuses CourtDetector (court-line ROI split) + PoseTracker (pose inference, EMA
-    smoothing, gap-filling, and keypoint/box drawing) — both originally written
-    'for use by main.py' but previously never wired in.
+    Two passes over the clip, mirroring src/pipeline/offline_tennis_tracker.py's proven
+    approach (see pose_tracker.py's module docstring for the full rationale):
 
-    Frames where the court can't be detected (e.g. broadcast close-ups/replays) are
-    written through unannotated rather than dropped, so gaps degrade gracefully.
+      Pass 1: for every frame, fit the court homography (CourtDetector) and full-frame
+        track every person, recording each track's projected real-world position
+        (PoseTracker.track_frame).
+      Selection: pick the far/near track IDs by which tracks spent the most time near a
+        baseline in real-world coordinates (PoseTracker.select_players) -- this is what
+        keeps a stationary chair umpire/line judge near the net from ever winning the
+        far-player slot, without any referee-specific exception.
+      Pass 2: re-read the clip and draw the two selected, EMA-smoothed tracks plus the
+        ball trail.
+
+    Frames where the court can't be detected (e.g. broadcast close-ups/replays) simply
+    don't contribute a homography that frame; player tracking picks back up as soon as
+    the court is visible again, and pass 2 still writes every frame (annotated or not)
+    so output length always matches the source clip.
     """
     cap = cv2.VideoCapture(clip_path)
     if not cap.isOpened():
@@ -210,42 +224,49 @@ def annotate_rally_clip(clip_path, output_path, pose_model):
     width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
     height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
 
-    court_detector = CourtDetector()
-    pose_tracker = PoseTracker(pose_model)
-    ball_tracker = get_ball_tracker(device=str(pose_model.device) if hasattr(pose_model, "device") else "cpu")
-    far_state = {"box": None, "kpts": None, "miss": 0}
-    near_state = {"box": None, "kpts": None, "miss": 0}
+    court_detector = CourtDetector(court_model)
+    pose_tracker = PoseTracker(pose_model, court_detector)
 
-    out = cv2.VideoWriter(output_path, cv2.VideoWriter_fourcc(*"mp4v"), fps, (width, height))
-
+    # ---- Pass 1: fit homography + full-frame track every person ----
     frame_idx = 0
-    prev_gray = None
     while cap.isOpened():
         ret, frame = cap.read()
         if not ret:
             break
 
-        curr_gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        H = court_detector.estimate_homography(frame)
+        pose_tracker.track_frame(frame, frame_idx, H)
+        frame_idx += 1
+
+    total_frames = frame_idx
+    if total_frames == 0:
+        cap.release()
+        return False
+
+    # ---- Select the far/near tracks, then EMA-smooth + gap-fill each for rendering ----
+    far_id, near_id = pose_tracker.select_players(frame_height=height)
+    far_track = pose_tracker.build_render_track(far_id)
+    near_track = pose_tracker.build_render_track(near_id)
+
+    # ---- Pass 2: re-read the clip and render the chosen tracks + ball trail ----
+    cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+    ball_tracker = get_ball_tracker(device=str(pose_model.device) if hasattr(pose_model, "device") else "cpu")
+    out = cv2.VideoWriter(output_path, cv2.VideoWriter_fourcc(*"mp4v"), fps, (width, height))
+
+    frame_idx = 0
+    while cap.isOpened():
+        ret, frame = cap.read()
+        if not ret:
+            break
+
         annotated_frame = frame.copy()
-        far_roi, near_roi = court_detector.get_rois(frame, width, height)
-
-        if far_roi is not None:
-            fx1, fy1, fx2, fy2 = far_roi
-            far_crop = frame[fy1:fy2, fx1:fx2]
-            pose_tracker.process_and_smooth(far_crop, fx1, fy1, True, far_state, annotated_frame,
-                                             prev_gray_frame=prev_gray, curr_gray_frame=curr_gray)
-
-        if near_roi is not None:
-            nx1, ny1, nx2, ny2 = near_roi
-            near_crop = frame[ny1:ny2, nx1:nx2]
-            pose_tracker.process_and_smooth(near_crop, nx1, ny1, False, near_state, annotated_frame,
-                                             prev_gray_frame=prev_gray, curr_gray_frame=curr_gray)
+        PoseTracker.draw(annotated_frame, far_track.get(frame_idx), is_far=True)
+        PoseTracker.draw(annotated_frame, near_track.get(frame_idx), is_far=False)
 
         ball_tracker.update(frame)
         ball_tracker.draw_trail(annotated_frame)
 
         out.write(annotated_frame)
-        prev_gray = curr_gray
         frame_idx += 1
 
     cap.release()
@@ -298,7 +319,8 @@ class BatchTennisPipeline:
         self.input_dir = config.VIDEO_PATH
         self.rallies_output_root = "./src/data/rallies_new"
         self.device = get_acceleration_device()
-        self._pose_model = None  # lazy-loaded, only if annotate=True and rallies were found
+        self._pose_model = None   # lazy-loaded, only if annotate=True and rallies were found
+        self._court_model = None  # lazy-loaded alongside _pose_model, for CourtDetector's homography
 
         self.video_files = sorted([f for f in os.listdir(self.input_dir) if f.lower().endswith('.mp4')])
         if not self.video_files:
@@ -314,6 +336,16 @@ class BatchTennisPipeline:
             self._pose_model.to(self.device)
         return self._pose_model
 
+    def get_court_model(self):
+        """Lazily loads (once) the court keypoint model used by CourtDetector to fit the
+        per-frame homography. Loaded once and reused across every clip in the match, same
+        as get_pose_model(), so annotate_rally_clip's CourtDetector(court_model) is cheap."""
+        if self._court_model is None:
+            print(f"⏳ Loading court keypoint model: {config.COURT_MODEL_PATH}")
+            self._court_model = YOLO(config.COURT_MODEL_PATH)
+            self._court_model.to(self.device)
+        return self._court_model
+
     def annotate_all_rallies(self, sliced_files, match_output_dir):
         """Renders a pose-annotated version of each cut rally clip, plus a combined annotated reel."""
         if not sliced_files:
@@ -322,13 +354,14 @@ class BatchTennisPipeline:
         annotated_dir = os.path.join(match_output_dir, "annotated")
         os.makedirs(annotated_dir, exist_ok=True)
         pose_model = self.get_pose_model()
+        court_model = self.get_court_model()
 
         print(f"\n🦴 Annotating {len(sliced_files)} rally clips with player pose overlays...")
         annotated_files = []
         for idx, clip_path in enumerate(sliced_files):
             clip_name = os.path.splitext(os.path.basename(clip_path))[0]
             output_path = os.path.join(annotated_dir, f"{clip_name}_annotated.mp4")
-            ok = annotate_rally_clip(clip_path, output_path, pose_model)
+            ok = annotate_rally_clip(clip_path, output_path, pose_model, court_model)
             if ok:
                 print(f"  🦴 Annotated clip {idx+1:02d}: {os.path.basename(output_path)}")
                 annotated_files.append(output_path)
