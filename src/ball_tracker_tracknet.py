@@ -77,6 +77,18 @@ class TrackNetBallTracker:
         self.miss_count = 0
         self.max_miss = 10
 
+    def reset(self):
+        """Clears all tracking state. Call this after a hard camera cut, so TrackNet's 3-frame
+        input buffer doesn't mix frames from two different shots (which would feed the model a
+        physically meaningless input and can produce an arbitrary "confident" detection), and so
+        a stale pre-cut last_position can't make a spurious post-cut detection look like a
+        plausible continuation (MAX_PLAUSIBLE_JUMP_PX has no way to reject a nonsensical jump if
+        it doesn't know a cut -- not real motion -- is what caused it)."""
+        self.frame_buffer.clear()
+        self.trail.clear()
+        self.last_position = None
+        self.miss_count = 0
+
     def _preprocess(self, frame):
         """Resizes and stacks the last 3 frames (current, prev, prev-prev) into model input."""
         resized = [cv2.resize(f, (TRACKNET_INPUT_WIDTH, TRACKNET_INPUT_HEIGHT)) for f in self.frame_buffer]

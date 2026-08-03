@@ -87,7 +87,12 @@ def get_score_at(times, scores, t_sec):
     if len(times) == 0:
         return 0.0
     idx = int(np.searchsorted(times, t_sec))
-    idx = min(idx, len(times) - 1)
+    if idx <= 0:
+        idx = 0
+    elif idx >= len(times):
+        idx = len(times) - 1
+    elif abs(times[idx - 1] - t_sec) <= abs(times[idx] - t_sec):
+        idx -= 1
     return float(scores[idx])
 
 
@@ -101,10 +106,23 @@ class RallyStateMachine:
     Requires active_score to stay above `enter_threshold` for `enter_dwell_sec` before switching
     WAITING -> POINT_ACTIVE, and below `exit_threshold` for `exit_dwell_sec` before switching back
     -- prevents single-sample noise from creating spurious rally boundaries.
+
+    enter_threshold=0.38 is chosen relative to BatchTennisPipeline's near-equal default
+    fusion_weights (~0.33-0.34 each) so that no single signal can trigger a rally alone (max
+    contribution ~0.34 < 0.38), while any two signals at a moderate ~0.6 each comfortably clear
+    it (~0.4 > 0.38) regardless of which two -- audio is no longer a hard requirement the way a
+    skewed-weights/higher-threshold combination made it before.
+
+    exit_dwell_sec=1.5 (reduced from an earlier 2.5s default) trims how much trailing dead time
+    gets included after a point actually ends -- every recorded rally's end timestamp lags the
+    true end by this much, since the state machine only confirms "over" after sustained low
+    activity. Not reduced below enter_dwell_sec's 1.5s: going shorter risks the opposite
+    failure, prematurely cutting a rally that's still going during a brief real lull between
+    shots (e.g. a long baseline exchange).
     """
 
-    def __init__(self, enter_threshold=0.55, exit_threshold=0.30,
-                 enter_dwell_sec=1.5, exit_dwell_sec=2.5, sample_interval_sec=0.5):
+    def __init__(self, enter_threshold=0.38, exit_threshold=0.20,
+                 enter_dwell_sec=1.5, exit_dwell_sec=1.5, sample_interval_sec=0.5):
         self.enter_threshold = enter_threshold
         self.exit_threshold = exit_threshold
         self.enter_dwell_samples = max(1, int(round(enter_dwell_sec / sample_interval_sec)))

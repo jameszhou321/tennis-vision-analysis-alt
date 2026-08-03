@@ -59,6 +59,17 @@ class BallTracker:
                     candidates.append((x, y, radius))
         return candidates
 
+    def reset(self):
+        """Clears all tracking state. Call this after a hard camera cut, so a stale pre-cut
+        position/trail can't get carried across into the new scene -- MOG2's background model in
+        particular would otherwise treat the entire new scene as "foreground motion" for several
+        frames, and the Kalman filter would try to associate that with a position from the shot
+        that just ended."""
+        self.bg_subtractor = cv2.createBackgroundSubtractorMOG2(history=120, varThreshold=25, detectShadows=False)
+        self.trail.clear()
+        self._initialized = False
+        self.miss_count = 0
+
     def update(self, frame):
         """Processes one frame. Returns {"position": (x,y) or None, "speed": float, "ball_activity_score": float}."""
         candidates = self._detect_candidates(frame)

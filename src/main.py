@@ -17,6 +17,7 @@ Features:
 """
 import cv2
 import numpy as np
+import csv
 import json
 import os
 import time
@@ -28,7 +29,7 @@ from ultralytics import YOLO
 
 import config_legacy as config
 from pose_tracker import PoseTracker
-from court_detector import CourtDetector
+from court_detector import CourtDetector, is_within_court_region
 from ball_tracker import BallTracker
 from audio_video_fusion import compute_impact_score_series, get_score_at, RallyStateMachine
 
@@ -51,6 +52,19 @@ def get_ball_tracker(device="cpu"):
             print(f"  ⚠️ TrackNet not available ({e}); falling back to heuristic ball tracker.")
             return BallTracker()
     return BallTracker()
+
+
+def detect_scene_cut_frames(video_path, threshold=None):
+    """Returns a set of frame indices where PySceneDetect found a hard camera cut in video_path.
+    Used to reset per-frame tracker state (ball tracker, motion detector, court homography) at
+    each cut -- otherwise a camera cutaway (crowd shot, player closeup, replay) gets misread as
+    plausible continuous motion, or lets a stale pre-cut position make a spurious post-cut
+    detection look like a plausible continuation (ball tracker "jump" gating, homography grace
+    period). Same PySceneDetect/ContentDetector approach process_broadcast_clip already uses for
+    its own scene segmentation."""
+    from scenedetect import detect, ContentDetector
+    scene_list = detect(video_path, ContentDetector(threshold=threshold or config.SCENE_CUT_THRESHOLD))
+    return {scene[0].frame_num for scene in scene_list[1:]}  # skip scene 0's start (frame 0, not a cut)
 
 # Block internal third-party logging noise
 logging.getLogger("ultralytics").setLevel(logging.ERROR)
@@ -175,7 +189,10 @@ def slice_and_combine_rallies(video_path, timeline, output_dir):
         # "delayed audio" in the exported clip. The two-stage seek plus avoid_negative_ts fixes
         # the sync while keeping nearly all of stream-copy's speed. Note this still can't
         # guarantee a frame-perfect start (that requires re-encoding), only that audio and
-        # video agree with each other once cut.
+        # video agree with each other once cut. The "2.0" here only controls how much gets
+        # decoded-and-discarded in the fine-seek step (verified empirically: the actual output
+        # start timestamp is unaffected by this value) -- it is NOT a pre-roll/padding knob, and
+        # does not affect what content the clip starts on.
         coarse_seek = max(0.0, start_sec - 2.0)
         fine_seek = start_sec - coarse_seek
         command = [
@@ -208,7 +225,7 @@ def slice_and_combine_rallies(video_path, timeline, output_dir):
     return sliced_files
 
 
-def annotate_rally_clip(clip_path, output_path, pose_model, court_model):
+def annotate_rally_clip(clip_path, output_path, pose_model, court_model, pose_model_crop=None):
     """Re-renders a single cut rally clip with near/far player pose skeletons overlaid.
 
     Two passes over the clip, mirroring src/pipeline/offline_tennis_tracker.py's proven
@@ -228,6 +245,12 @@ def annotate_rally_clip(clip_path, output_path, pose_model, court_model):
     don't contribute a homography that frame; player tracking picks back up as soon as
     the court is visible again, and pass 2 still writes every frame (annotated or not)
     so output length always matches the source clip.
+
+    A hard camera cut (detected up front via PySceneDetect) immediately resets the court
+    homography and BoT-SORT tracking state, rather than letting the brief post-cut grace period
+    that estimate_homography() otherwise allows keep tracking against a homography fit for the
+    pre-cut framing -- this is what stops a crowd shot or player closeup from being tracked as
+    if it were still the court, which can otherwise surface a spurious far/near-player candidate.
     """
     cap = cv2.VideoCapture(clip_path)
     if not cap.isOpened():
@@ -237,9 +260,10 @@ def annotate_rally_clip(clip_path, output_path, pose_model, court_model):
     fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
     width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
     height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    cut_frames = detect_scene_cut_frames(clip_path)
 
     court_detector = CourtDetector(court_model)
-    pose_tracker = PoseTracker(pose_model, court_detector)
+    pose_tracker = PoseTracker(pose_model, court_detector, pose_model_crop)
 
     # ---- Pass 1: fit homography + full-frame track every person ----
     frame_idx = 0
@@ -247,6 +271,10 @@ def annotate_rally_clip(clip_path, output_path, pose_model, court_model):
         ret, frame = cap.read()
         if not ret:
             break
+
+        if frame_idx in cut_frames:
+            court_detector.reset()
+            pose_tracker.reset_for_cut()
 
         H = court_detector.estimate_homography(frame)
         pose_tracker.track_frame(frame, frame_idx, H)
@@ -272,6 +300,9 @@ def annotate_rally_clip(clip_path, output_path, pose_model, court_model):
         ret, frame = cap.read()
         if not ret:
             break
+
+        if frame_idx in cut_frames:
+            ball_tracker.reset()
 
         annotated_frame = frame.copy()
         PoseTracker.draw(annotated_frame, far_track.get(frame_idx), is_far=True)
@@ -323,17 +354,25 @@ class RobustKinematicDetector:
 
 
 class BatchTennisPipeline:
-    def __init__(self, mode="static", annotate=True, fusion_weights=None):
+    def __init__(self, mode="static", annotate=True, fusion_weights=None, fusion_debug=True):
         self.mode = mode  # "static", "broadcast", or "fusion"
         self.annotate = annotate  # whether to render pose-annotated versions of cut rally clips
         # Weights for "fusion" mode's active_score = w_audio*impact + w_motion*motion + w_ball*ball.
-        # Audio weighted highest by default, per the fusion doc's own rationale (impact sounds
-        # are a more sensitive indicator of active play than motion/ball alone). Must sum to ~1.0.
-        self.fusion_weights = fusion_weights or {"audio": 0.5, "motion": 0.3, "ball": 0.2}
+        # Near-equal by default (previously audio-heavy at 0.5/0.3/0.2, which combined with
+        # RallyStateMachine's old enter_threshold=0.55 made audio a hard requirement -- motion+ball
+        # together maxed at 0.5, structurally unable to ever cross 0.55 without it). Near-equal
+        # weights plus RallyStateMachine's enter_threshold=0.38 (see audio_video_fusion.py) mean no
+        # single signal can trigger a rally alone, while any two reasonably strong signals can.
+        # Must sum to ~1.0.
+        self.fusion_weights = fusion_weights or {"audio": 0.34, "motion": 0.33, "ball": 0.33}
+        # Writes <match_output_dir>/fusion_debug_log.csv plus per-tick prints in fusion mode, so
+        # the fused score's components can be inspected/tuned against real footage.
+        self.fusion_debug = fusion_debug
         self.input_dir = config.VIDEO_PATH
         self.rallies_output_root = "./src/data/rallies_new"
         self.device = get_acceleration_device()
         self._pose_model = None   # lazy-loaded, only if annotate=True and rallies were found
+        self._pose_model_crop = None  # second instance, lazy-loaded alongside _pose_model
         self._court_model = None  # lazy-loaded alongside _pose_model, for CourtDetector's homography
 
         self.video_files = sorted([f for f in os.listdir(self.input_dir) if f.lower().endswith('.mp4')])
@@ -349,6 +388,16 @@ class BatchTennisPipeline:
             self._pose_model = YOLO(config.MODEL_PATH)
             self._pose_model.to(self.device)
         return self._pose_model
+
+    def get_pose_model_crop(self):
+        """Lazily loads (once) a second, independent pose-model instance used for the
+        supplemental far-half crop pass in pose_tracker.py. Must be a separate instance from
+        get_pose_model()'s, not the same object reused -- see PoseTracker.__init__ for why."""
+        if self._pose_model_crop is None:
+            print(f"⏳ Loading second pose model instance for far-half crop pass: {config.MODEL_PATH}")
+            self._pose_model_crop = YOLO(config.MODEL_PATH)
+            self._pose_model_crop.to(self.device)
+        return self._pose_model_crop
 
     def get_court_model(self):
         """Lazily loads (once) the court keypoint model used by CourtDetector to fit the
@@ -368,6 +417,7 @@ class BatchTennisPipeline:
         annotated_dir = os.path.join(match_output_dir, "annotated")
         os.makedirs(annotated_dir, exist_ok=True)
         pose_model = self.get_pose_model()
+        pose_model_crop = self.get_pose_model_crop()
         court_model = self.get_court_model()
 
         print(f"\n🦴 Annotating {len(sliced_files)} rally clips with player pose overlays...")
@@ -375,7 +425,7 @@ class BatchTennisPipeline:
         for idx, clip_path in enumerate(sliced_files):
             clip_name = os.path.splitext(os.path.basename(clip_path))[0]
             output_path = os.path.join(annotated_dir, f"{clip_name}_annotated.mp4")
-            ok = annotate_rally_clip(clip_path, output_path, pose_model, court_model)
+            ok = annotate_rally_clip(clip_path, output_path, pose_model, court_model, pose_model_crop)
             if ok:
                 print(f"  🦴 Annotated clip {idx+1:02d}: {os.path.basename(output_path)}")
                 annotated_files.append(output_path)
@@ -475,7 +525,7 @@ class BatchTennisPipeline:
         cap.release()
         return build_timeline_blocks(frame_log)
 
-    def process_fusion_clip(self, video_path):
+    def process_fusion_clip(self, video_path, match_output_dir=None):
         """Fusion Mode: Combines audio impact detection, player-motion score, and ball activity
         score (weighted, see self.fusion_weights) through a hysteresis state machine to detect
         rally boundaries. This is the audio-video-ball fusion design from the project doc,
@@ -484,14 +534,32 @@ class BatchTennisPipeline:
           - player motion score: RobustKinematicDetector (already used by static mode)
           - ball activity score: get_ball_tracker() (TrackNet or heuristic backend)
           - hysteresis state machine: audio_video_fusion.RallyStateMachine()
+
+        Both the motion and ball signals are gated to the on-court region (via a per-frame
+        CourtDetector homography, same approach pose_tracker.py already uses): a person/ball
+        detection whose real-world position falls outside the court's physical extent plus
+        COURT_REGION_MARGIN_M is excluded, since otherwise spectators in the stands (motion) or a
+        TrackNet/heuristic false positive in the crowd (ball) can register as rally activity even
+        with no camera cut at all. A detected hard camera cut additionally resets the ball
+        tracker, motion detector, and court homography state immediately, rather than letting a
+        stale pre-cut position/framing bleed into the new scene.
+
+        When self.fusion_debug is set, also writes a per-tick CSV to
+        '<match_output_dir>/fusion_debug_log.csv' (impact/motion/ball/active scores + state) so
+        the fused score's components can be inspected/tuned against real footage.
         """
         print("🔊 Extracting and analyzing audio for impact sounds...")
         audio_times, audio_scores = compute_impact_score_series(video_path, hop_sec=0.5)
+
+        print("🔍 Detecting camera cuts (for tracker state resets)...")
+        cut_frames = detect_scene_cut_frames(video_path)
 
         yolo_model = YOLO("yolov8n.pt")
         yolo_model.to(self.device)
         motion_detector = RobustKinematicDetector(movement_threshold=12.0)
         ball_tracker = get_ball_tracker(device=self.device)
+        court_detector = CourtDetector(self.get_court_model())
+        margin_m = config.COURT_REGION_MARGIN_M
 
         cap = cv2.VideoCapture(video_path)
         fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
@@ -500,49 +568,110 @@ class BatchTennisPipeline:
 
         state_machine = RallyStateMachine(sample_interval_sec=sample_interval_sec)
 
+        debug_file, debug_writer = None, None
+        if self.fusion_debug and match_output_dir is not None:
+            os.makedirs(match_output_dir, exist_ok=True)
+            debug_file = open(os.path.join(match_output_dir, "fusion_debug_log.csv"), "w", newline="")
+            debug_writer = csv.writer(debug_file)
+            debug_writer.writerow(["frame_idx", "t_sec", "timestamp", "impact_score",
+                                    "motion_score", "avg_ball_score", "active_score", "status"])
+
         frame_log = []
         ball_window_scores = []
         frame_idx = 0
 
         print("🎬 Running fused audio + motion + ball analysis...")
-        while cap.isOpened():
-            ret, frame = cap.read()
-            if not ret:
-                break
+        try:
+            while cap.isOpened():
+                ret, frame = cap.read()
+                if not ret:
+                    break
 
-            # Ball tracker needs a continuous frame stream (TrackNet's 3-frame input in
-            # particular), so it runs every frame; motion/audio/decision only evaluate on the
-            # coarser ~2Hz grid below, using the average ball score accumulated since last time.
-            ball_result = ball_tracker.update(frame)
-            ball_window_scores.append(ball_result["ball_activity_score"])
+                if frame_idx in cut_frames:
+                    if self.fusion_debug:
+                        print(f"  ✂️  Camera cut at t={frame_idx / fps:.1f}s -- resetting tracker state")
+                    ball_tracker.reset()
+                    motion_detector.prev_centers = []
+                    court_detector.reset()
 
-            if frame_idx % sample_interval == 0:
-                results = yolo_model(frame, classes=[0], verbose=False)
-                raw_motion = 0.0
-                if len(results) > 0 and len(results[0].boxes) > 0:
-                    boxes = results[0].boxes.xyxy.cpu().numpy()
-                    raw_motion = motion_detector.calculate_motion_score(boxes)
-                # Normalize raw pixel-displacement motion score into 0-1. The original static-mode
-                # cutoff (12.0) marked "playing" -- treat that as roughly the midpoint and saturate
-                # at ~2x it, rather than just re-deriving the same hard threshold inside the fusion.
-                motion_score = min(1.0, raw_motion / 24.0)
+                H = court_detector.estimate_homography(frame)
 
-                avg_ball_score = float(np.mean(ball_window_scores)) if ball_window_scores else 0.0
-                ball_window_scores = []
+                # Ball tracker needs a continuous frame stream (TrackNet's 3-frame input in
+                # particular), so it runs every frame; motion/audio/decision only evaluate on the
+                # coarser ~2Hz grid below, using the average ball score accumulated since last time.
+                ball_result = ball_tracker.update(frame)
+                ball_score = ball_result["ball_activity_score"]
+                if H is not None and ball_result["position"] is not None:
+                    H_inv = np.linalg.inv(H)
+                    pt = np.array([[[ball_result["position"][0], ball_result["position"][1]]]], dtype=np.float32)
+                    real_xy = cv2.perspectiveTransform(pt, H_inv)[0][0]
+                    if not is_within_court_region((float(real_xy[0]), float(real_xy[1])), margin_m):
+                        ball_score = 0.0  # off-court "ball" -- almost certainly a crowd/stands false positive
+                elif H is None:
+                    # Can't verify on-court-ness without a homography this frame -- fail closed
+                    # like the motion gating below, rather than letting an ungated score through.
+                    # This matters most exactly when it's most likely to be wrong: a frame where
+                    # the court model can't find any keypoints is very often a camera cutaway
+                    # (crowd shot, closeup, a broadcast transition/graphic) rather than real
+                    # court footage, which is precisely where a TrackNet false positive (see
+                    # ball_tracker_tracknet.py's docstring) is most likely and least trustworthy.
+                    ball_score = 0.0
+                ball_window_scores.append(ball_score)
 
-                t_sec = frame_idx / fps
-                impact_score = get_score_at(audio_times, audio_scores, t_sec)
+                if frame_idx % sample_interval == 0:
+                    results = yolo_model(frame, classes=[0], verbose=False)
+                    raw_motion = 0.0
+                    if len(results) > 0 and len(results[0].boxes) > 0:
+                        boxes = results[0].boxes.xyxy.cpu().numpy()
+                        if H is not None:
+                            H_inv = np.linalg.inv(H)
+                            on_court_boxes = []
+                            for box in boxes:
+                                foot_pt = np.array([[[(box[0] + box[2]) / 2.0, box[3]]]], dtype=np.float32)
+                                real_xy = cv2.perspectiveTransform(foot_pt, H_inv)[0][0]
+                                if is_within_court_region((float(real_xy[0]), float(real_xy[1])), margin_m):
+                                    on_court_boxes.append(box)
+                            boxes = np.array(on_court_boxes) if on_court_boxes else np.empty((0, 4))
+                        else:
+                            # Can't verify anyone's on-court without a homography this tick --
+                            # conservative default is "no counted motion" rather than trusting
+                            # every YOLO person box in frame (crowd included).
+                            boxes = np.empty((0, 4))
+                        if len(boxes) > 0:
+                            raw_motion = motion_detector.calculate_motion_score(boxes)
+                    # Normalize raw pixel-displacement motion score into 0-1. The original static-mode
+                    # cutoff (12.0) marked "playing" -- treat that as roughly the midpoint and saturate
+                    # at ~2x it, rather than just re-deriving the same hard threshold inside the fusion.
+                    motion_score = min(1.0, raw_motion / 24.0)
 
-                active_score = (self.fusion_weights["audio"] * impact_score +
-                                 self.fusion_weights["motion"] * motion_score +
-                                 self.fusion_weights["ball"] * avg_ball_score)
+                    avg_ball_score = float(np.mean(ball_window_scores)) if ball_window_scores else 0.0
+                    ball_window_scores = []
 
-                status = state_machine.update(active_score)
-                frame_log.append({"timestamp": format_timestamp(t_sec), "status": status})
+                    t_sec = frame_idx / fps
+                    impact_score = get_score_at(audio_times, audio_scores, t_sec)
 
-            frame_idx += 1
+                    active_score = (self.fusion_weights["audio"] * impact_score +
+                                     self.fusion_weights["motion"] * motion_score +
+                                     self.fusion_weights["ball"] * avg_ball_score)
 
-        cap.release()
+                    status = state_machine.update(active_score)
+                    timestamp = format_timestamp(t_sec)
+                    frame_log.append({"timestamp": timestamp, "status": status})
+
+                    if self.fusion_debug:
+                        print(f"  🎯 t={t_sec:6.1f}s | impact={impact_score:.2f} motion={motion_score:.2f} "
+                              f"ball={avg_ball_score:.2f} | active={active_score:.2f} | {status}")
+                        if debug_writer is not None:
+                            debug_writer.writerow([frame_idx, f"{t_sec:.2f}", timestamp,
+                                                    f"{impact_score:.4f}", f"{motion_score:.4f}",
+                                                    f"{avg_ball_score:.4f}", f"{active_score:.4f}", status])
+
+                frame_idx += 1
+        finally:
+            cap.release()
+            if debug_file is not None:
+                debug_file.close()
+
         return build_timeline_blocks(frame_log)
 
     def run(self):
@@ -554,10 +683,14 @@ class BatchTennisPipeline:
             print(f"🔍 Analyzing Match ({idx + 1}/{len(self.video_files)}): {video_file}")
             print(f"========================================================")
 
+            # Computed up-front (rather than after the dispatch below) since fusion mode's
+            # diagnostic logging writes fusion_debug_log.csv into this directory.
+            match_output_dir = os.path.join(self.rallies_output_root, video_name)
+
             if self.mode == "broadcast":
                 timeline = self.process_broadcast_clip(video_path)
             elif self.mode == "fusion":
-                timeline = self.process_fusion_clip(video_path)
+                timeline = self.process_fusion_clip(video_path, match_output_dir)
             else:
                 timeline = self.process_static_clip(video_path)
 
@@ -574,7 +707,6 @@ class BatchTennisPipeline:
             print("-" * 50)
 
             # Slices, compiles, and saves everything to src/data/rallies_new/<video_name>/
-            match_output_dir = os.path.join(self.rallies_output_root, video_name)
             sliced_files = slice_and_combine_rallies(video_path, timeline, match_output_dir)
 
             # Optionally re-render each cut rally clip with pose skeleton overlays
@@ -586,5 +718,5 @@ if __name__ == '__main__':
     # Toggle between modes here: "static" (fence-cam), "broadcast" (TV footage via CLIP scene
     # classification), or "fusion" (audio impact + player motion + ball activity, weighted).
     # Toggle annotate=False to skip pose-overlay rendering and only cut/combine rallies.
-    pipeline = BatchTennisPipeline(mode="broadcast", annotate=True)
+    pipeline = BatchTennisPipeline(mode="fusion", annotate=True)
     pipeline.run()
