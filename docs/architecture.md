@@ -1,7 +1,7 @@
 # Tennis Match Analysis Project — File Manifest
 
 > Graduation Project: Computer Vision-Based Automatic Tennis Match Analysis System
-> Updated: 2026-07-25 — rewritten to match the current `src/` layout (ball tracking, audio-video fusion, TrackNet backend, `model/yolo/` baseline, `training/` package). Supersedes the session18 (2026-04-24) version.
+> Updated: 2026-08-03 — `court_detector.py`/`pose_tracker.py` rewritten from the old Hough-line ROI approach to homography-based real-world tracking; `main.py` gained scene-cut detection and off-court region rejection. Supersedes the 2026-07-25 version.
 
 ---
 
@@ -12,8 +12,9 @@ tennis-vision-analysis/
 ├── src/                          Source code
 │   ├── main.py                   Batch pipeline entry point (rally segmentation + cutting + overlay rendering)
 │   ├── config_legacy.py          Configuration for main.py (paths, thresholds, EMA parameters)
-│   ├── court_detector.py         Lightweight Hough-based court ROI detector (used by pose_tracker)
-│   ├── pose_tracker.py           YOLO-pose player tracker (near/far), EMA smoothing + gap filling
+│   ├── court_detector.py         14-keypoint YOLO model → weighted homography (pixel↔real-world meters)
+│   ├── pose_tracker.py           Full-frame BoT-SORT + pose, projected into real-world court coords,
+│   │                              picks far/near by baseline proximity; EMA smoothing + gap filling
 │   ├── ball_tracker.py           Classical CV ball tracker (background subtraction + Kalman filter)
 │   ├── ball_tracker_tracknet.py  TrackNet-backed ball tracker (higher accuracy, optional setup)
 │   ├── audio_video_fusion.py     Audio impact detection + WAITING/POINT_ACTIVE hysteresis state machine
@@ -53,10 +54,10 @@ All of `models/`, `data/`, `videos/`, `runs/`, `logs/`, and `results/` are exclu
 
 | File | Purpose |
 | --- | --- |
-| `src/main.py` | Batch video-processing entry point. Segments each match video into rallies using one of three interchangeable modes — `"static"` (fixed fence-cam, player-box velocity), `"broadcast"` (TV footage, PySceneDetect + CLIP scene classification), or `"fusion"` (weighted combination of audio impact detection, player motion, and ball activity via a hysteresis state machine) — then cuts/concatenates the clips with FFmpeg into `data/rallies_new/<video_name>/`, optionally re-rendering each clip with pose skeleton + ball trail overlays into an `annotated/` subfolder |
-| `src/config_legacy.py` | Configuration for `main.py`: video/output/model paths, scout skip-frame/scale, EMA smoothing coefficient, pose confidence thresholds, checkpoint/control file locations |
-| `src/court_detector.py` | Court ROI detector (`CourtDetector`). Uses Hough line detection for a quick scan of the court and frames the far/near ROI (lightweight scanning stage, not the keypoint model); called by `main.py` |
-| `src/pose_tracker.py` | Pose tracker (`PoseTracker`). Wraps YOLO-pose within the ROI, uses multi-term scoring (confidence, tracking inertia, court proximity, local motion) to reject non-players (officials, ball kids), with EMA smoothing and dropped-frame compensation; called by `main.py` |
+| `src/main.py` | Batch video-processing entry point. Segments each match video into rallies using one of three interchangeable modes — `"static"` (fixed fence-cam, player-box velocity), `"broadcast"` (TV footage, PySceneDetect + CLIP scene classification), or `"fusion"` (weighted combination of audio impact detection, player motion, and ball activity via a hysteresis state machine) — then cuts/concatenates the clips with FFmpeg into `data/rallies_new/<video_name>/`, optionally re-rendering each clip with pose skeleton + ball trail overlays into an `annotated/` subfolder. Both `annotate_rally_clip()` and `process_fusion_clip()` also detect hard scene cuts (`detect_scene_cut_frames`, PySceneDetect `ContentDetector`) and reset the court/pose tracker state at each cut; `process_fusion_clip()` additionally rejects off-court detections (`is_within_court_region`) from the motion/ball fusion signals |
+| `src/config_legacy.py` | Configuration for `main.py`: video/output/model paths, scout skip-frame/scale, EMA smoothing coefficient, pose/homography confidence thresholds, far-crop supplemental-pass and cross-source track-stitching parameters, scene-cut and off-court-region thresholds, checkpoint/control file locations |
+| `src/court_detector.py` | Court homography detector (`CourtDetector`). Detects the 14 standard court keypoints with a YOLO keypoint model and fits a weighted, temporally-smoothed pixel↔real-world (meters) homography (RANSAC seed + Levenberg-Marquardt refinement); tolerates brief missed detections but drops back to `None` past `MAX_HOMOGRAPHY_STALE_FRAMES`. Replaces the old Hough-line ROI split; same approach as `src/pipeline/offline_tennis_tracker.py`. Called by `main.py` |
+| `src/pose_tracker.py` | Pose tracker (`PoseTracker`). Full-frame person+pose tracking (persistent IDs via BoT-SORT), projected into real-world court coordinates via `CourtDetector`'s homography, plus a supplemental far-half crop pass and cross-source track stitching; selects the far/near player by which (stitched) track spends the most time near a baseline over the clip, then EMA-smooths and gap-fills each. Replaces the old per-ROI-crop, multi-term-scoring approach (confidence + inertia + court proximity + local motion), which a chair umpire near the net could win against a far player deep near their own baseline; called by `main.py` |
 | `src/ball_tracker.py` | Classical CV ball tracker: background subtraction + circular-blob filtering + Kalman-filtered trajectory. No setup required; the default fallback backend |
 | `src/ball_tracker_tracknet.py` | TrackNet-backed ball tracker wrapper — same interface as `ball_tracker.py` but higher accuracy; requires `tracknet/` model files + pretrained weights to be downloaded manually (see root `README.md`) |
 | `src/audio_video_fusion.py` | Band-pass filtered audio impact (onset) detection + a WAITING/POINT_ACTIVE hysteresis state machine; fuses audio, player-motion, and ball-activity scores into rally boundaries. Used by `main.py`'s `process_fusion_clip()` (`mode="fusion"`) |
@@ -337,8 +338,8 @@ python src/model/mst/run_ablation.py        # batch-run ablation/components/hype
 ```
 main.py
   ├── config_legacy.py           (path/parameter configuration)
-  ├── court_detector.py          (court ROI scan)
-  ├── pose_tracker.py            (player pose tracking)
+  ├── court_detector.py          (court homography via 14-keypoint model)
+  ├── pose_tracker.py            (BoT-SORT + pose, projected into real-world court coords)
   ├── ball_tracker.py            (classical CV ball tracking, default)
   ├── ball_tracker_tracknet.py   (TrackNet ball tracking, optional backend)
   │     └── tracknet/            (upstream model architecture + weights)

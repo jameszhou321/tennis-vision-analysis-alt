@@ -1,0 +1,13 @@
+# graphify-specific exclusions, layered on top of .gitignore (graphify reads both;
+# entries here can only exclude more, never re-include something .gitignore drops).
+# graphify-out/ itself is always excluded by default, no entry needed here.
+
+# Python tooling/caches not already covered by .gitignore
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.ipynb_checkpoints/
+
+# Lock/metadata files with no graph-worthy content
+uv.lock
+LICENSE

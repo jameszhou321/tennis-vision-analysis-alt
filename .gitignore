@@ -51,3 +51,14 @@ tracking_data.json
 .DS_Store
 Thumbs.db
 *.log
+
+# ===== Claude Code (personal overrides) =====
+.claude/settings.local.json
+.claude/*.graphify-bak
+
+# ===== graphify (local/regenerable artifacts; graph.json itself is tracked
+# for the git merge=graphify driver in .gitattributes) =====
+graphify-out/cache/
+graphify-out/cost.json
+graphify-out/.graphify_root
+graphify-out/.graphify_python

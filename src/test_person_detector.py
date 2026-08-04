@@ -7,8 +7,6 @@ import json
 import ctypes
 from pathlib import Path
 from ultralytics import YOLO
-import cv2
-import numpy as np
 from collections import defaultdict
 
 # ── Path Configurations ───────────────────────────────────────────────

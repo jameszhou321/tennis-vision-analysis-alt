@@ -1,10 +1,9 @@
-translate all chinese documentation into english: """generate_trajectory.py — Player Movement Trajectory Generation Module
+"""generate_trajectory.py — Player Movement Trajectory Generation Module
 
 Function: Extract player coordinate sequences from tracking results to generate trajectory features for action recognition.
 """
 import cv2
 import numpy as np
-import torch
 from ultralytics import YOLO
 from scipy.optimize import least_squares
 

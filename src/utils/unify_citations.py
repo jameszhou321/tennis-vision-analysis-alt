@@ -5,7 +5,7 @@ Global Unified Citation Numbering Script.
 3. Update all in-text citation marker flags
 Usage: cd ProjectAnnotationAndTesting && .venv/Scripts/python src/utils/unify_citations.py
 """
-import re, os, sys
+import re, os
 
 _PROJECT_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 _PAPER_DIR = os.path.join(os.path.dirname(_PROJECT_DIR), "Paper")  # Thesis directory is outside the project root

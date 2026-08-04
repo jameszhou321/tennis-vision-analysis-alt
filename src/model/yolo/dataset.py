@@ -11,7 +11,7 @@ import random
 import cv2
 import numpy as np
 import torch
-from torch.utils.data import Dataset, DataLoader
+from torch.utils.data import Dataset
 
 ACTION_NAMES = ["idle", "forehand", "backhand", "serve", "move"]
 NUM_CLASSES = 5
@@ -26,57 +26,6 @@ def _read_frame(path):
         return np.zeros((IMG_SIZE, IMG_SIZE, 3), dtype=np.uint8)
     img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
     return cv2.resize(img, (IMG_SIZE, IMG_SIZE), interpolation=cv2.INTER_LINEAR)
-
-
-def collect_samples(data_root):
-    """
-    Traverses rallies_train/ to collect all frame samples.
-    Returns: [(image_path, action_id), ...]
-    """
-    samples = []
-    rallies = sorted([
-        os.path.join(data_root, d) for d in os.listdir(data_root)
-        if os.path.isdir(os.path.join(data_root, d))
-    ])
-
-    for rally_dir in rallies:
-        anno_path = os.path.join(rally_dir, "annotations.json")
-        frames_dir = os.path.join(rally_dir, "frames")
-        if not os.path.exists(anno_path):
-            continue
-
-        # Use pre-extracted frames
-        if not os.path.isdir(frames_dir):
-            continue
-
-        with open(anno_path, "r", encoding="utf-8") as f:
-            anno = json.load(f)
-
-        # Convert annotations to frame-level labels (assumes 30fps)
-        fps = 30.0
-        frame_files = sorted([
-            f for f in os.listdir(frames_dir) if f.endswith(".jpg")
-        ])
-        if not frame_files:
-            continue
-
-        # Pre-compute labels for each frame
-        max_idx = int(frame_files[-1].replace(".jpg", "")) + 1
-        frame_labels = np.zeros(max_idx, dtype=int)
-        for seg in anno:
-            start_frame = round(seg["start_time"] * fps)
-            end_frame = round(seg["end_time"] * fps)
-            action_id = seg["action_id"]
-            for fi in range(max(0, start_frame), min(end_frame + 1, max_idx)):
-                frame_labels[fi] = action_id
-
-        for fname in frame_files:
-            frame_idx = int(fname.replace(".jpg", ""))
-            if frame_idx < len(frame_labels):
-                img_path = os.path.join(frames_dir, fname)
-                samples.append((img_path, int(frame_labels[frame_idx])))
-
-    return samples
 
 
 class TennisFrameDataset(Dataset):

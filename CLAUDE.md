@@ -120,3 +120,13 @@ downloading `src/tracknet/{model.py,general.py}` and weights at `src/models/trac
 - Paths containing Chinese characters need Windows short-path handling (`_get_short_path` helper pattern
   used in `pose_tracker.py`/`demo/player.py`) — skipped automatically on non-Windows via a `hasattr(ctypes,
   "windll")` check.
+
+## graphify
+
+This project has a knowledge graph at graphify-out/ with god nodes, community structure, and cross-file relationships.
+
+Rules:
+- For codebase questions, first run `graphify query "<question>"` when graphify-out/graph.json exists. Use `graphify path "<A>" "<B>"` for relationships and `graphify explain "<concept>"` for focused concepts. These return a scoped subgraph, usually much smaller than GRAPH_REPORT.md or raw grep output.
+- If graphify-out/wiki/index.md exists, use it for broad navigation instead of raw source browsing.
+- Read graphify-out/GRAPH_REPORT.md only for broad architecture review or when query/path/explain do not surface enough context.
+- After modifying code, run `graphify update .` to keep the graph current (AST-only, no API cost).

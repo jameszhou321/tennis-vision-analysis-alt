@@ -1,7 +1,6 @@
 """Extract a good forehand frame from rally videos for thesis figure."""
-import json, os, sys, ctypes
+import json, ctypes
 import cv2
-import numpy as np
 from pathlib import Path
 
 # --- court line definitions (14-pt to line connections) ---

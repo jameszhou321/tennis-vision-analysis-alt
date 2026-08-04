@@ -1,5 +1,5 @@
 """Generate an improved confusion matrix figure: row-normalized + Macro-F1 + Kappa"""
-import os, csv, math
+import os
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt

@@ -3,7 +3,6 @@
 Function: randomly samples frames from data/rallies_new/ and stores them in
 data/person_sorter/image/ for labeling
 """
-import os
 import cv2
 import random
 import numpy as np

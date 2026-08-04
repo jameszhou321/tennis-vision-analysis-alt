@@ -6,8 +6,8 @@ from PyQt5.QtWidgets import (
     QLabel, QPushButton, QSlider, QFileDialog,
     QProgressBar, QSizePolicy, QFrame, QLineEdit,
 )
-from PyQt5.QtCore import Qt, QSize, QTimer
-from PyQt5.QtGui import QImage, QPixmap, QFont, QColor, QPalette
+from PyQt5.QtCore import Qt, QTimer
+from PyQt5.QtGui import QImage, QPixmap, QFont
 
 from player import VideoPlayer
 from timeline import TimelinePanel, ACTION_NAMES, ACTION_COLORS

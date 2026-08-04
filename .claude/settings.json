@@ -1,0 +1,53 @@
+{
+  "permissions": {
+    "deny": [
+      "Read(./videos/**)",
+      "Edit(./videos/**)",
+      "Read(./data/**)",
+      "Edit(./data/**)",
+      "Read(./models/**)",
+      "Edit(./models/**)",
+      "Read(./runs/**)",
+      "Edit(./runs/**)",
+      "Read(./logs/**)",
+      "Edit(./logs/**)",
+      "Read(./results/**)",
+      "Edit(./results/**)",
+      "Read(./**/__pycache__/**)",
+      "Edit(./**/__pycache__/**)",
+      "Read(./.venv/**)",
+      "Edit(./.venv/**)"
+    ]
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash|Grep",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "graphify hook-guard search"
+          }
+        ]
+      },
+      {
+        "matcher": "Read|Glob",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "graphify hook-guard read"
+          }
+        ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          { 
+            "type": "command",
+            "command": "rtk hook claude"
+          }
+        ]
+      }
+    ]
+  }
+}

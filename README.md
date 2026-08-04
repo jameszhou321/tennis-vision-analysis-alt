@@ -27,7 +27,7 @@ Stage 3, **MSTFormer** (Multi-Stream Transformer), is the core contribution: it 
 | Module | Path | Description |
 | --- | --- | --- |
 | **Court detection** | `src/court_detector.py`, `src/pipeline/` | YOLO 14-keypoint model; detects court points and computes the homography |
-| **Pose tracking** | `src/pose_tracker.py` | YOLO-pose tracking of near/far players, with EMA smoothing, gap filling, and multi-term scoring (confidence, tracking inertia, court proximity, local motion) to reject non-players like officials and ball kids |
+| **Pose tracking** | `src/pose_tracker.py` | Full-frame BoT-SORT + YOLO-pose, projected into real-world court coordinates via the homography above; picks near/far players by which track spends the most time near a baseline, with EMA smoothing and gap filling |
 | **Ball tracking** | `src/ball_tracker.py`, `src/ball_tracker_tracknet.py`, `src/tracknet/` | Two interchangeable backends: a classical CV tracker (background subtraction + Kalman filter, no setup required) and a [TrackNet](https://github.com/yastrebksv/TrackNet)-backed tracker (higher accuracy, requires downloading pretrained model files/weights — see [Usage](#usage)) |
 | **Audio-video-ball fusion** | `src/audio_video_fusion.py` | Band-pass filtered audio impact (onset) detection + a WAITING/POINT_ACTIVE hysteresis state machine; used by `main.py`'s `"fusion"` segmentation mode to combine audio, player-motion, and ball-activity signals into rally boundaries |
 | **Action recognition (core)** | `src/model/mst/` | MSTFormer: dual-head (5 actions + keyframe), three-way visual-token merge, pose/crop ablation switches |
@@ -37,7 +37,7 @@ Stage 3, **MSTFormer** (Multi-Stream Transformer), is the core contribution: it 
 | **Visualization demo** | `src/demo/` | PyQt5 desktop app: video playback + 3-row timeline (GT / prediction / frames) + live inference overlay |
 | **Annotation & data tools** | `src/utils/` | Action timeline annotator (Flask web), court keypoint labeler (GUI), player bbox labeler, dataset splitting, etc. |
 
-> Per-file responsibilities are documented in [`docs/architecture_zh.md`](./docs/architecture_zh.md) (Chinese).
+> Per-file responsibilities are documented in [`docs/architecture.md`](./docs/architecture.md).
 
 ## Repository layout
 
@@ -45,8 +45,8 @@ Stage 3, **MSTFormer** (Multi-Stream Transformer), is the core contribution: it 
 tennis-vision-analysis/
 ├── src/                    Source code
 │   ├── main.py             Batch video-processing entry point (segmentation + cutting + annotation)
-│   ├── court_detector.py   Court ROI detector (used by pose_tracker for near/far player regions)
-│   ├── pose_tracker.py     Pose tracker
+│   ├── court_detector.py   Court homography detector (14-keypoint model, used by pose_tracker)
+│   ├── pose_tracker.py     Pose tracker (BoT-SORT + real-world court coords)
 │   ├── ball_tracker.py     Classical CV ball tracker (background subtraction + Kalman filter)
 │   ├── ball_tracker_tracknet.py  TrackNet-backed ball tracker wrapper (higher accuracy)
 │   ├── audio_video_fusion.py     Audio impact detection + hysteresis state machine (fusion mode)
@@ -61,7 +61,7 @@ tennis-vision-analysis/
 │   └── training/           Person detection/classification training scripts
 ├── configs/                YAML configs (court, person, MSTFormer main/ablation/hyperparams/components)
 ├── docs/
-│   ├── architecture_zh.md  Detailed per-file notes & module dependencies
+│   ├── architecture.md     Detailed per-file notes & module dependencies
 │   └── figures/            Experimental result figures
 ├── requirements.txt
 ├── LICENSE

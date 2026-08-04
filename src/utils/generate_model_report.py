@@ -12,13 +12,12 @@ Outputs:
   └── confusion_legend.png   # Confusion matrix legend
 """
 
-import os, sys, csv, json
+import os, csv
 from pathlib import Path
 
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
-import matplotlib.colors as mcolors
 import numpy as np
 
 REPORT_DIR = Path(__file__).resolve().parents[2] / "models" / "report"
@@ -50,38 +49,6 @@ def parse_csv(csv_path):
         for row in reader:
             rows.append(row)
     return rows
-
-
-def compute_confusion_matrix(pred_counts, gt_counts):
-    """
-    Build a 5x5 confusion matrix from the pred_* / gt_* aggregate counts.
-    Since we only know the totals per class, predictions are allocated using
-    a uniform assumption based on the GT proportions (an approximation) —
-    an exact confusion matrix requires per-sample inference.
-    Returns a 5x5 numpy array.
-    """
-    cm = np.zeros((5, 5), dtype=int)
-    # pred_idle corresponds to gt_idle
-    # Since only the totals are known, use a uniform assumption: allocate
-    # predictions in proportion to the GT distribution
-    gt_total = sum(gt_counts)
-    if gt_total == 0:
-        return cm
-    for i, (pred, gt) in enumerate(zip(pred_counts, gt_counts)):
-        if gt > 0:
-            cm[i, i] = min(pred, gt)
-            # Allocate the remaining predictions proportionally across the other GT classes
-            remaining_pred = pred - cm[i, i]
-            if remaining_pred > 0:
-                other_gt = [g for j, g in enumerate(gt_counts) if j != i]
-                other_sum = sum(other_gt)
-                if other_sum > 0:
-                    for j, g in enumerate(gt_counts):
-                        if j != i and other_sum > 0:
-                            alloc = int(remaining_pred * g / other_sum)
-                            cm[i, j] += alloc
-    # Adjust so the per-class prediction total does not exceed the actual total
-    return cm
 
 
 def plot_curves(all_data, report_dir):
@@ -266,23 +233,6 @@ def collect_all_data():
                 rows = parse_csv(csv_path)
                 all_data.append((config_name, ts_name, rows))
     return all_data
-
-
-def gen_confusion_matrix_html(pred_counts, gt_counts):
-    """Generate an approximate confusion matrix as a Markdown table"""
-    lines = []
-    lines.append("| | idle | forehand | backhand | serve | move |")
-    lines.append("|---|---|---|---|---|---|")
-    for i, aname in enumerate(ACTION_NAMES):
-        cells = [f"**{aname}** (GT={gt_counts[i]})"]
-        # Simplified: fill in the raw prediction counts as the row
-        # This is display-only; an exact confusion matrix requires per-sample data
-        cells.append(str(pred_counts[i]))
-        # Remaining columns are left as placeholders
-        for _ in range(4):
-            cells.append("-")
-        lines.append("| " + " | ".join(cells) + " |")
-    return "\n".join(lines)
 
 
 def generate_report(all_data, report_dir):

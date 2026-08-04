@@ -1,5 +1,4 @@
 """vit_extractor.py — Lightweight ViT Patch Embedding Feature Extractor"""
-import torch
 import torch.nn as nn
 
 

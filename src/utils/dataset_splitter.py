@@ -5,7 +5,6 @@ Function: Randomly splits paired images and label files inside data/person_sorte
           into training and validation subdirectories according to a target ratio, 
           formatting them to adhere to YOLO structure requirements.
 """
-import os
 import random
 import shutil
 from pathlib import Path

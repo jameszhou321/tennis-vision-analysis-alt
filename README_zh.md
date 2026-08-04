@@ -27,7 +27,7 @@
 | 模块 | 路径 | 说明 |
 | --- | --- | --- |
 | **球场检测** | `src/court_detector.py`, `src/pipeline/` | YOLO 14 点关键点模型；检测球场点并计算单应性变换 |
-| **姿态追踪** | `src/pose_tracker.py` | 使用 YOLO-pose 追踪近/远端球员，配合 EMA 平滑、缺口填补，以及多项打分机制（置信度、追踪惯性、球场邻近度、局部运动量）以剔除裁判、捡球童等非球员对象 |
+| **姿态追踪** | `src/pose_tracker.py` | 全画面 BoT-SORT + YOLO-pose，通过上述单应性变换投影到真实球场坐标；依据各追踪轨迹在底线附近停留时间选出近/远端球员，配合 EMA 平滑与缺口填补 |
 | **球追踪** | `src/ball_tracker.py`, `src/ball_tracker_tracknet.py`, `src/tracknet/` | 两种可互换的后端：经典 CV 追踪器（背景减除 + 卡尔曼滤波，无需额外配置）以及基于 [TrackNet](https://github.com/yastrebksv/TrackNet) 的追踪器（精度更高，需下载模型文件/权重——见[使用方法](#使用方法)） |
 | **音视频-球融合** | `src/audio_video_fusion.py` | 带通滤波的音频冲击（onset）检测 + WAITING/POINT_ACTIVE 滞回状态机；供 `main.py` 的 `"fusion"` 分段模式使用，将音频、球员运动与球活动信号融合以确定回合边界 |
 | **动作识别（核心）** | `src/model/mst/` | MSTFormer：双头结构（5 类动作 + 关键帧）、三路视觉 token 融合、姿态/裁剪图消融开关 |
@@ -37,7 +37,7 @@
 | **可视化演示** | `src/demo/` | PyQt5 桌面应用：视频播放 + 三行时间轴（真值/预测/帧）+ 实时推理叠加 |
 | **标注与数据工具** | `src/utils/` | 动作时间轴标注工具（Flask 网页版）、球场关键点标注工具（GUI）、球员边界框标注工具、数据集划分等 |
 
-> 各文件的具体职责详见 [`docs/architecture_zh.md`](./docs/architecture_zh.md)。
+> 各文件的具体职责详见 [`docs/architecture.md`](./docs/architecture.md)（英文）。
 
 ## 仓库结构
 
@@ -45,8 +45,8 @@
 tennis-vision-analysis/
 ├── src/                    源代码
 │   ├── main.py             批处理视频入口（分段 + 切割 + 标注）
-│   ├── court_detector.py   球场 ROI 检测器（供 pose_tracker 用于近/远端球员区域划分）
-│   ├── pose_tracker.py     姿态追踪器
+│   ├── court_detector.py   球场单应性检测器（14 点关键点模型，供 pose_tracker 使用）
+│   ├── pose_tracker.py     姿态追踪器（BoT-SORT + 真实球场坐标）
 │   ├── ball_tracker.py     经典 CV 球追踪器（背景减除 + 卡尔曼滤波）
 │   ├── ball_tracker_tracknet.py  基于 TrackNet 的球追踪器封装（精度更高）
 │   ├── audio_video_fusion.py     音频冲击检测 + 滞回状态机（融合模式）
@@ -61,7 +61,7 @@ tennis-vision-analysis/
 │   └── training/           人物检测/分类训练脚本
 ├── configs/                YAML 配置文件（球场、人物、MSTFormer 主配置/消融/超参/组件）
 ├── docs/
-│   ├── architecture_zh.md  详细的分文件说明及模块依赖关系
+│   ├── architecture.md     详细的分文件说明及模块依赖关系（英文）
 │   └── figures/             实验结果图表
 ├── requirements.txt
 ├── LICENSE

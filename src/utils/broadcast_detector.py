@@ -4,7 +4,6 @@ broadcast_detector.py — Spatial Rally Detection Engine
 Function: Detects tennis rallies based on the spatial physics of the ball 
           and positional distribution of players.
 """
-import cv2
 import numpy as np
 
 class SpatialRallyDetector:

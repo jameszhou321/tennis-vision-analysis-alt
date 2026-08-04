@@ -8,7 +8,7 @@ Usage:
   .venv/Scripts/python src/utils/generate_confusion_matrices.py
 """
 
-import os, sys, json, random, csv
+import os, sys, random
 import warnings
 warnings.filterwarnings("ignore")
 

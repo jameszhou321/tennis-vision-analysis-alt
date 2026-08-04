@@ -6,7 +6,6 @@ Output: Generates frames/{000000.jpg, ...} under each rally directory
 import os
 import ctypes
 import argparse
-import numpy as np
 import cv2
 from tqdm import tqdm
 

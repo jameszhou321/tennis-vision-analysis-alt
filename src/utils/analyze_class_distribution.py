@@ -6,7 +6,6 @@ Usage:
 """
 
 import json
-import os
 import argparse
 from collections import Counter
 from pathlib import Path

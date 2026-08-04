@@ -3,7 +3,6 @@ visualize_person_test.py — Visualizes person detection results.
 Usage: python src/utils/visualize_person_test.py
 Outputs: results/person_test/viz/
 """
-import os
 import json
 import ctypes
 from pathlib import Path

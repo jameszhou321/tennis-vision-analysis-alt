@@ -18,9 +18,7 @@ Features:
 import cv2
 import numpy as np
 import csv
-import json
 import os
-import time
 import torch
 import logging
 import subprocess
@@ -181,26 +179,23 @@ def slice_and_combine_rallies(video_path, timeline, output_dir):
 
         # Fast lossless stream-copy using FFmpeg.
         #
-        # Two-stage seek: a coarse -ss BEFORE -i (fast keyframe seek, skips most of the file)
-        # followed by a small corrective -ss AFTER -i (frame-accurate, only decodes ~2s). With
-        # `-c copy`, a single -ss before -i can only cut the *video* stream at the nearest
-        # preceding keyframe while the *audio* stream cuts almost exactly at start_sec -- the
-        # two streams end up starting at different real timestamps, which is what shows up as
-        # "delayed audio" in the exported clip. The two-stage seek plus avoid_negative_ts fixes
-        # the sync while keeping nearly all of stream-copy's speed. Note this still can't
-        # guarantee a frame-perfect start (that requires re-encoding), only that audio and
-        # video agree with each other once cut. The "2.0" here only controls how much gets
-        # decoded-and-discarded in the fine-seek step (verified empirically: the actual output
-        # start timestamp is unaffected by this value) -- it is NOT a pre-roll/padding knob, and
-        # does not affect what content the clip starts on.
-        coarse_seek = max(0.0, start_sec - 2.0)
-        fine_seek = start_sec - coarse_seek
+        # Single seek BEFORE -i only (input-side seeking). With `-c copy`, video can't start
+        # mid-GOP -- ffmpeg must snap to a keyframe, and the snap direction depends on where
+        # the -ss lives: before -i it snaps BACKWARD to the preceding keyframe (safe: a couple
+        # extra seconds of pre-roll), but after -i (output-side seeking) it snaps FORWARD to
+        # the next keyframe, silently dropping everything between start_sec and that keyframe
+        # -- this was previously causing clips to start late and lose the first part of the
+        # rally. Padding the seek back by `seek_pad` and stretching the requested duration to
+        # match keeps the whole rally in frame; it costs a little extra footage at the edges
+        # instead of losing real content.
+        seek_pad = 2.0
+        coarse_seek = max(0.0, start_sec - seek_pad)
+        padded_duration = duration + (start_sec - coarse_seek)
         command = [
             "ffmpeg", "-y",
             "-ss", f"{coarse_seek:.3f}",
             "-i", video_path,
-            "-ss", f"{fine_seek:.3f}",
-            "-t", f"{duration:.3f}",
+            "-t", f"{padded_duration:.3f}",
             "-avoid_negative_ts", "make_zero",
             "-c", "copy",
             output_filename
