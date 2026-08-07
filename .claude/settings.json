@@ -1,5 +1,11 @@
 {
   "permissions": {
+    "allow": [
+      "Bash(rtk ls *)",
+      "Bash(rtk proxy *)",
+      "Bash(python3 -c ' *)",
+      "Bash(.venv/bin/python3 -c ' *)"
+    ],
     "deny": [
       "Read(./videos/**)",
       "Edit(./videos/**)",
@@ -42,7 +48,7 @@
       {
         "matcher": "Bash",
         "hooks": [
-          { 
+          {
             "type": "command",
             "command": "rtk hook claude"
           }

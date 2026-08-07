@@ -22,6 +22,7 @@ import os
 import torch
 import logging
 import subprocess
+from collections import deque
 from PIL import Image
 from ultralytics import YOLO
 
@@ -154,15 +155,19 @@ def concat_videos(file_paths, combined_output_path, label="reel"):
 
 def slice_and_combine_rallies(video_path, timeline, output_dir):
     """Slices playing blocks into individual clips and compiles them into one final video.
-    Returns the list of sliced clip filepaths (empty list if none were produced)."""
+    Returns a list of {"path": clip_filepath, "end_sec": original_video_end_seconds} dicts
+    (empty list if none were produced). end_sec is kept alongside each path so
+    annotate_rally_clip() can later work out exactly which frames of a full-match pass
+    (scene cuts, ball tracking) correspond to this clip -- see its docstring."""
     os.makedirs(output_dir, exist_ok=True)
-    
+
     playing_blocks = [b for b in timeline if b["status"] == "PLAYING (Rally)"]
     if not playing_blocks:
         print("  ℹ️ No playing rally blocks detected to slice.")
         return []
 
     sliced_files = []
+    sliced_clips = []
     print(f"\n🎬 Slicing {len(playing_blocks)} rally clips into: '{output_dir}/'...")
     
     for idx, block in enumerate(playing_blocks):
@@ -205,6 +210,7 @@ def slice_and_combine_rallies(video_path, timeline, output_dir):
             subprocess.run(command, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
             print(f"  💾 Saved clip {idx+1:02d}: {os.path.basename(output_filename)} [{block['start']} -> {block['end']}]")
             sliced_files.append(output_filename)
+            sliced_clips.append({"path": output_filename, "end_sec": end_sec})
         except FileNotFoundError:
             print("  ❌ Error: 'ffmpeg' binary not found. Please run 'brew install ffmpeg'.")
             return
@@ -217,10 +223,44 @@ def slice_and_combine_rallies(video_path, timeline, output_dir):
         combined_output_path = os.path.join(output_dir, "all_rallies_combined.mp4")
         concat_videos(sliced_files, combined_output_path, label="raw")
 
-    return sliced_files
+    return sliced_clips
 
 
-def annotate_rally_clip(clip_path, output_path, pose_model, court_model, pose_model_crop=None):
+def _locate_clip_in_full_match(clip_frame_count, end_sec, fps):
+    """Returns the exact frame index (into the full-match pass) that this clip's frame 0
+    corresponds to.
+
+    slice_and_combine_rallies cuts clips with `-ss` *before* `-i` plus `-c copy`, which snaps
+    the start backward to the nearest preceding keyframe -- so the clip's frame 0 is NOT simply
+    `round(coarse_seek * fps)` frames into the source video; it depends on where that keyframe
+    actually falls, which isn't known without probing the source's keyframe list. It also uses
+    `-avoid_negative_ts make_zero`, which resets the clip's own timestamps to start at zero, so
+    the clip's own metadata can't be used to recover its absolute position in the source either.
+
+    Instead this works backward from the clip's *end*, which slicing does NOT pad: the clip runs
+    from the keyframe-snapped start through exactly `end_sec` (see slice_and_combine_rallies's
+    padded_duration = end_sec - coarse_seek). So the clip's last decoded frame corresponds to
+    source frame `round(end_sec * fps)`, and clip_frame_count (measured by actually decoding the
+    clip, not trusted from container metadata) gives the exact offset of frame 0 by simple
+    subtraction -- exact regardless of where ffmpeg's keyframe snap landed."""
+    return round(end_sec * fps) - clip_frame_count
+
+
+def _draw_replayed_ball_trail(annotated_frame, trail, color=(0, 255, 255)):
+    """Draws a fading trail from a deque of (x, y) positions -- same rendering as
+    BallTracker.draw_trail()/TrackNetBallTracker.draw_trail(), for use when replaying
+    precomputed positions instead of running a live tracker (see annotate_rally_clip)."""
+    pts = list(trail)
+    n = len(pts)
+    for i in range(1, n):
+        thickness = max(1, int(3 * (i / n)))
+        cv2.line(annotated_frame, pts[i - 1], pts[i], color, thickness)
+    if pts:
+        cv2.circle(annotated_frame, pts[-1], 4, color, -1)
+
+
+def annotate_rally_clip(clip_path, output_path, pose_model, court_model, pose_model_crop=None,
+                         end_sec=None, full_cut_frames=None, full_ball_positions=None, fps=None):
     """Re-renders a single cut rally clip with near/far player pose skeletons overlaid.
 
     Two passes over the clip, mirroring src/pipeline/offline_tennis_tracker.py's proven
@@ -246,16 +286,35 @@ def annotate_rally_clip(clip_path, output_path, pose_model, court_model, pose_mo
     that estimate_homography() otherwise allows keep tracking against a homography fit for the
     pre-cut framing -- this is what stops a crowd shot or player closeup from being tracked as
     if it were still the court, which can otherwise surface a spurious far/near-player candidate.
+
+    end_sec/full_cut_frames/full_ball_positions/fps (from process_fusion_clip, fusion mode only):
+    when all four are given, scene cuts and the ball trail are looked up from that full-match
+    pass instead of re-running PySceneDetect and the ball tracker on this clip from scratch --
+    see _locate_clip_in_full_match for how the frame offset is computed exactly. Falls back to
+    the original per-clip PySceneDetect + fresh ball tracker when any is missing (static/
+    broadcast mode, or fusion data unavailable).
     """
     cap = cv2.VideoCapture(clip_path)
     if not cap.isOpened():
         print(f"  ⚠️ Could not open clip for annotation: {os.path.basename(clip_path)}")
         return False
 
-    fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
+    clip_fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
     width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
     height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-    cut_frames = detect_scene_cut_frames(clip_path)
+    meta_frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
+
+    can_reuse_fusion_data = (full_cut_frames is not None and full_ball_positions is not None
+                              and end_sec is not None and fps is not None and meta_frame_count > 0)
+
+    local_ball_positions = None
+    if can_reuse_fusion_data:
+        frame_offset = max(0, _locate_clip_in_full_match(meta_frame_count, end_sec, fps))
+        cut_frames = {f - frame_offset for f in full_cut_frames
+                      if 0 <= f - frame_offset < meta_frame_count}
+        local_ball_positions = full_ball_positions[frame_offset:frame_offset + meta_frame_count]
+    else:
+        cut_frames = detect_scene_cut_frames(clip_path)
 
     court_detector = CourtDetector(court_model)
     pose_tracker = PoseTracker(pose_model, court_detector, pose_model_crop)
@@ -287,8 +346,14 @@ def annotate_rally_clip(clip_path, output_path, pose_model, court_model, pose_mo
 
     # ---- Pass 2: re-read the clip and render the chosen tracks + ball trail ----
     cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
-    ball_tracker = get_ball_tracker(device=str(pose_model.device) if hasattr(pose_model, "device") else "cpu")
-    out = cv2.VideoWriter(output_path, cv2.VideoWriter_fourcc(*"mp4v"), fps, (width, height))
+    out = cv2.VideoWriter(output_path, cv2.VideoWriter_fourcc(*"mp4v"), clip_fps, (width, height))
+
+    ball_tracker = None
+    replayed_trail = None
+    if local_ball_positions is not None:
+        replayed_trail = deque(maxlen=15)  # matches BallTracker/TrackNetBallTracker's trail_length
+    else:
+        ball_tracker = get_ball_tracker(device=str(pose_model.device) if hasattr(pose_model, "device") else "cpu")
 
     frame_idx = 0
     while cap.isOpened():
@@ -297,14 +362,23 @@ def annotate_rally_clip(clip_path, output_path, pose_model, court_model, pose_mo
             break
 
         if frame_idx in cut_frames:
-            ball_tracker.reset()
+            if ball_tracker is not None:
+                ball_tracker.reset()
+            elif replayed_trail is not None:
+                replayed_trail.clear()
 
         annotated_frame = frame.copy()
         PoseTracker.draw(annotated_frame, far_track.get(frame_idx), is_far=True)
         PoseTracker.draw(annotated_frame, near_track.get(frame_idx), is_far=False)
 
-        ball_tracker.update(frame)
-        ball_tracker.draw_trail(annotated_frame)
+        if ball_tracker is not None:
+            ball_tracker.update(frame)
+            ball_tracker.draw_trail(annotated_frame)
+        else:
+            position = local_ball_positions[frame_idx] if frame_idx < len(local_ball_positions) else None
+            if position is not None:
+                replayed_trail.append(position)
+            _draw_replayed_ball_trail(annotated_frame, replayed_trail)
 
         out.write(annotated_frame)
         frame_idx += 1
@@ -404,9 +478,16 @@ class BatchTennisPipeline:
             self._court_model.to(self.device)
         return self._court_model
 
-    def annotate_all_rallies(self, sliced_files, match_output_dir):
-        """Renders a pose-annotated version of each cut rally clip, plus a combined annotated reel."""
-        if not sliced_files:
+    def annotate_all_rallies(self, sliced_clips, match_output_dir,
+                              full_cut_frames=None, full_ball_positions=None, fps=None):
+        """Renders a pose-annotated version of each cut rally clip, plus a combined annotated reel.
+
+        full_cut_frames/full_ball_positions/fps (from process_fusion_clip, fusion mode only): when
+        given, annotate_rally_clip() reuses this full-match pass's scene-cut and ball-tracking
+        results instead of re-running PySceneDetect and the ball tracker per clip. Left None for
+        static/broadcast mode (or if fusion data isn't available), which falls back to the
+        original per-clip recomputation."""
+        if not sliced_clips:
             return
 
         annotated_dir = os.path.join(match_output_dir, "annotated")
@@ -415,12 +496,17 @@ class BatchTennisPipeline:
         pose_model_crop = self.get_pose_model_crop()
         court_model = self.get_court_model()
 
-        print(f"\n🦴 Annotating {len(sliced_files)} rally clips with player pose overlays...")
+        print(f"\n🦴 Annotating {len(sliced_clips)} rally clips with player pose overlays...")
         annotated_files = []
-        for idx, clip_path in enumerate(sliced_files):
+        for idx, clip_info in enumerate(sliced_clips):
+            clip_path = clip_info["path"]
             clip_name = os.path.splitext(os.path.basename(clip_path))[0]
             output_path = os.path.join(annotated_dir, f"{clip_name}_annotated.mp4")
-            ok = annotate_rally_clip(clip_path, output_path, pose_model, court_model, pose_model_crop)
+            ok = annotate_rally_clip(clip_path, output_path, pose_model, court_model, pose_model_crop,
+                                      end_sec=clip_info.get("end_sec"),
+                                      full_cut_frames=full_cut_frames,
+                                      full_ball_positions=full_ball_positions,
+                                      fps=fps)
             if ok:
                 print(f"  🦴 Annotated clip {idx+1:02d}: {os.path.basename(output_path)}")
                 annotated_files.append(output_path)
@@ -542,6 +628,10 @@ class BatchTennisPipeline:
         When self.fusion_debug is set, also writes a per-tick CSV to
         '<match_output_dir>/fusion_debug_log.csv' (impact/motion/ball/active scores + state) so
         the fused score's components can be inspected/tuned against real footage.
+
+        Returns (timeline_blocks, cut_frames, ball_positions_full, fps): the latter three let
+        annotate_rally_clip() reuse this pass's scene-cut and ball-tracking results per sliced
+        clip instead of re-running PySceneDetect and the ball tracker from scratch on each one.
         """
         print("🔊 Extracting and analyzing audio for impact sounds...")
         audio_times, audio_scores = compute_impact_score_series(video_path, hop_sec=0.5)
@@ -573,7 +663,10 @@ class BatchTennisPipeline:
 
         frame_log = []
         ball_window_scores = []
+        ball_positions_full = []  # per-frame (x,y) or None, kept for annotate_rally_clip to
+                                   # reuse instead of re-running the ball tracker on each cut clip
         frame_idx = 0
+        H = None
 
         print("🎬 Running fused audio + motion + ball analysis...")
         try:
@@ -588,13 +681,23 @@ class BatchTennisPipeline:
                     ball_tracker.reset()
                     motion_detector.prev_centers = []
                     court_detector.reset()
+                    H = None  # don't keep gating on a pre-cut homography until the next sample tick
 
-                H = court_detector.estimate_homography(frame)
+                # Homography only feeds a coarse on/off-court gate below (evaluated at the same
+                # ~2Hz cadence as motion/decision), so it doesn't need re-estimating every single
+                # frame -- unlike annotate_rally_clip's pass 1, which needs frame-accurate
+                # homography for smooth per-frame player-position tracking and always calls this
+                # every frame. frames_elapsed=sample_interval keeps CourtDetector's staleness cap
+                # (MAX_HOMOGRAPHY_STALE_FRAMES) measured in the same wall-clock time regardless of
+                # this throttled cadence -- see estimate_homography's docstring.
+                if frame_idx % sample_interval == 0:
+                    H = court_detector.estimate_homography(frame, frames_elapsed=sample_interval)
 
                 # Ball tracker needs a continuous frame stream (TrackNet's 3-frame input in
                 # particular), so it runs every frame; motion/audio/decision only evaluate on the
                 # coarser ~2Hz grid below, using the average ball score accumulated since last time.
                 ball_result = ball_tracker.update(frame)
+                ball_positions_full.append(ball_result["position"])
                 ball_score = ball_result["ball_activity_score"]
                 if H is not None and ball_result["position"] is not None:
                     H_inv = np.linalg.inv(H)
@@ -667,7 +770,7 @@ class BatchTennisPipeline:
             if debug_file is not None:
                 debug_file.close()
 
-        return build_timeline_blocks(frame_log)
+        return build_timeline_blocks(frame_log), cut_frames, ball_positions_full, fps
 
     def run(self):
         for idx, video_file in enumerate(self.video_files):
@@ -682,10 +785,12 @@ class BatchTennisPipeline:
             # diagnostic logging writes fusion_debug_log.csv into this directory.
             match_output_dir = os.path.join(self.rallies_output_root, video_name)
 
+            full_cut_frames, full_ball_positions, fusion_fps = None, None, None
             if self.mode == "broadcast":
                 timeline = self.process_broadcast_clip(video_path)
             elif self.mode == "fusion":
-                timeline = self.process_fusion_clip(video_path, match_output_dir)
+                timeline, full_cut_frames, full_ball_positions, fusion_fps = \
+                    self.process_fusion_clip(video_path, match_output_dir)
             else:
                 timeline = self.process_static_clip(video_path)
 
@@ -702,11 +807,14 @@ class BatchTennisPipeline:
             print("-" * 50)
 
             # Slices, compiles, and saves everything to src/data/rallies_new/<video_name>/
-            sliced_files = slice_and_combine_rallies(video_path, timeline, match_output_dir)
+            sliced_clips = slice_and_combine_rallies(video_path, timeline, match_output_dir)
 
             # Optionally re-render each cut rally clip with pose skeleton overlays
             if self.annotate:
-                self.annotate_all_rallies(sliced_files, match_output_dir)
+                self.annotate_all_rallies(sliced_clips, match_output_dir,
+                                           full_cut_frames=full_cut_frames,
+                                           full_ball_positions=full_ball_positions,
+                                           fps=fusion_fps)
 
 
 if __name__ == '__main__':

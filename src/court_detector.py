@@ -117,7 +117,7 @@ class CourtDetector:
         self._stale_count = 0
         self.filter.history = []
 
-    def estimate_homography(self, frame):
+    def estimate_homography(self, frame, frames_elapsed=1):
         """Detects the 14 court keypoints in `frame` and returns a temporally-smoothed
         pixel->real-world (meters) homography H, or None if the court has never been
         detected yet this clip, or if it's gone too long (MAX_HOMOGRAPHY_STALE_FRAMES)
@@ -134,6 +134,13 @@ class CourtDetector:
         the person detector finds in the new scene. Once staleness exceeds the cap, H is
         dropped back to None (and the smoothing filter's history cleared) until the court
         is confidently re-detected, rather than trusted indefinitely.
+
+        frames_elapsed: how many video frames have passed since the last call (default 1,
+        i.e. called every frame). Callers that only invoke this every Nth frame (main.py's
+        fusion loop, to save YOLO inference on frames whose homography is only used for a
+        coarse on/off-court gate) should pass N here so MAX_HOMOGRAPHY_STALE_FRAMES still
+        represents the same wall-clock grace period regardless of call cadence -- otherwise
+        the staleness cap would silently stretch out by a factor of N in real time.
         """
         res = self.model.predict(frame, conf=0.3, verbose=False)[0]
         fresh_fit = False
@@ -157,7 +164,7 @@ class CourtDetector:
         if fresh_fit:
             self._stale_count = 0
         else:
-            self._stale_count += 1
+            self._stale_count += frames_elapsed
             if self._stale_count > config.MAX_HOMOGRAPHY_STALE_FRAMES:
                 self._last_H = None
                 self.filter.history = []
